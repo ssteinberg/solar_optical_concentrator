@@ -1,2 +1,8 @@
-# solar_optical_concentrator
-Implementation for the paper "Two-Mirror Compact System for Ideal Concentration of Diffuse Light"
+## How to build
+
+```
+cmake -H. -Bbuild
+cd build
+cmake --build .
+```
+
