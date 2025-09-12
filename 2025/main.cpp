@@ -120,10 +120,10 @@ struct TwoMirrorConcentrator {
             // mirror 2
             float2 p2_new;
 
-            // using non-inverted tangent direction
+            // using non-inverted tangent direction, r = length(p2)
             if (targetShape == TargetShape::FLAT) p2_new = p2 + length(p2) * std::sin(dB) * float2(n2.y, -n2.x);
 
-            // using inverted tangent direction
+            // using inverted tangent direction, r = length(p2)
             else if (targetShape == TargetShape::CYLINDRICAL) p2_new = p2 + length(p2) * std::sin(dB) * float2(-n2.y, n2.x);
 
             // new directions
