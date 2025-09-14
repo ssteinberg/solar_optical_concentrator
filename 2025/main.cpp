@@ -103,9 +103,11 @@ struct TwoMirrorConcentrator {
         float2 K_out = -normalize(p2);
         float2 n1 = normalize(K_int - K_in);
         float2 n2 = normalize(K_out - K_int);
+        float r = f;
+        float R = L + f;
+        float B = 0.0f;
 
         // numerical integration
-        float B = 0.0f;
         while (B < B_max) {
 
             // mirror 1
@@ -116,15 +118,16 @@ struct TwoMirrorConcentrator {
 
             // beta
             float dB = dy / S(B);
-            
+            float B_new = B + dB;
+
             // mirror 2
-            float2 p2_new;
-
-            // using non-inverted tangent direction, r = length(p2)
-            if (targetShape == TargetShape::FLAT) p2_new = p2 + length(p2) * std::sin(dB) * float2(n2.y, -n2.x);
-
-            // using inverted tangent direction, r = length(p2)
-            else if (targetShape == TargetShape::CYLINDRICAL) p2_new = p2 + length(p2) * std::sin(dB) * float2(-n2.y, n2.x);
+            float d = R - 2.0f * f - 2.0f * L;
+            float sinB = std::sin(B);
+            float cosB = std::cos(B);
+            float dr = r * ((r + d) * sinB - p1.y * cosB) / ((r + d) * cosB + p1.y * sinB - r - R) * dB;
+            float r_new = r + dr;
+            float2 p2_new(r_new * std::cos(B_new), r_new * std::sin(B_new));
+            float R_new = length(p2_new - p1_new);
 
             // new directions
             float2 K_int_new = normalize(p2_new - p1_new);
@@ -145,7 +148,9 @@ struct TwoMirrorConcentrator {
             K_out = K_out_new;
             n1 = n1_new;
             n2 = n2_new;
-            B += dB;
+            r = r_new;
+            R = R_new;
+            B = B_new;
         }
     }
 
@@ -159,7 +164,7 @@ struct TwoMirrorConcentrator {
             if (HitInfo hit2; M2.intersect(hit2, ray2)) {
 
                 // compute point through target and store path of ray
-                rayPaths.emplace_back(ray1.o, hit1.P, hit2.P, hit2.P + 5.0f * normalize(ray2.d - 2 * dot(hit2.N, ray2.d) * hit2.N));
+                rayPaths.emplace_back(ray1.o, hit1.P, hit2.P, hit2.P + 10.0f * normalize(ray2.d - 2 * dot(hit2.N, ray2.d) * hit2.N));
             }
         }
     }
@@ -179,7 +184,7 @@ int main(int argc, char* argv[]) {
     const TargetShape targetShape = TargetShape::CYLINDRICAL;
     const float f = 1.0f;
     const float2 K_in(-1.0f, 0.0f);
-    float dy = 0.01f;
+    float dy = 0.001f;
     float L, B_max;
     if (targetShape == TargetShape::FLAT) {
         L = 8.0f * f;
@@ -204,7 +209,7 @@ int main(int argc, char* argv[]) {
     float2 extremeRayDirectionNegative(extremeRayDirectionX, -extremeRayDirectionY);
 
     // iterate over y
-    const float y_max = 5.0f;
+    const float y_max = 3.0f;
     float y = -y_max;
     const float increment = 0.1f;
     while (y < y_max) {
