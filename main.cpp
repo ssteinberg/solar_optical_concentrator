@@ -31,30 +31,37 @@ float EPSILON_OVER_TWO = EPSILON / 2.0f;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// ray
 struct Ray {
     float2 o, d;
     Ray(const float2& o, const float2& d) : o(o), d(d) {}
 };
 
+// hit info
 struct HitInfo {
     float2 P, N;
 };
 
+// target shape
 enum struct TargetShape {
     FLAT,
     CYLINDRICAL
 };
 
+// mirror
 struct Mirror {
 
+    // coordinates and normals of the line segments of the mirror
     std::vector<std::pair<float2, float2>> segments;
     std::vector<std::pair<float2, float2>> normals;
 
+    // add coordinates and normals of a line segment to the mirror
     void addSegment(const float2& p1, const float2& p2, const float2& n1, const float2& n2) {
         segments.emplace_back(p1, p2);
         normals.emplace_back(n1, n2);
     }
 
+    // check for ray-mirror intersection
     bool intersect(HitInfo& hitInfo, const Ray& ray) {
 
         // check all line segments in mirror
@@ -83,11 +90,14 @@ struct Mirror {
 
 };
 
+// two-mirror concentrator
 struct TwoMirrorConcentrator {
 
+    // two mirrors
     Mirror M1, M2;
 
-    void build(const TargetShape& targetShape, const float& L, const float& f, const float2& K_in, const float& dy, const float& B_max) {
+    // compute the line segments of the two mirrors
+    void build(const TargetShape& targetShape, const bool& inverted, const float& L, const float& f, const float2& K_in, const float& dB, const float& B_max) {
 
         // outgoing intensity to target
         const auto& S = [=](const float beta) {
@@ -99,41 +109,44 @@ struct TwoMirrorConcentrator {
         // initial conditions
         float2 p1(-L, 0.0f);
         float2 p2(f, 0.0f);
-        float2 K_int = normalize(p2 - p1);
-        float2 K_out = -normalize(p2);
-        float2 n1 = normalize(K_int - K_in);
-        float2 n2 = normalize(K_out - K_int);
-        float r = f;
-        float R = L + f;
-        float B = 0.0f;
+        float2 K_int = p2 - p1;
+        float R = length(K_int);
+        K_int /= R;
+        float2 K_out = -p2;
+        float r = length(K_out);
+        K_out /= r;
+        float2 n1 = K_int - K_in;
+        float2 n2 = K_out - K_int;
 
         // numerical integration
+        float B = 0.0f;
         while (B < B_max) {
 
-            // mirror 1
-            float y_new = p1.y + dy;
-            float dx = -n1.y / n1.x * dy; // using dx_dy
-            float x_new = p1.x + dx;
-            float2 p1_new(x_new, y_new);
-
-            // beta
-            float dB = dy / S(B);
+            // step in beta
             float B_new = B + dB;
 
-            // mirror 2
-            float d = R - 2.0f * f - 2.0f * L;
+            // precomputation
             float sinB = std::sin(B);
             float cosB = std::cos(B);
+            float d = R - 2.0f * (L + f);
+
+            // (7)
+            float dy = (inverted ? -1.0f : 1.0f) * S(B) * dB;
+            float dx = dy * (p1.y - r * sinB) / (r * (cosB - 1.0f) + 2.0f * (L + f));
+            float2 p1_new(p1.x + dx, p1.y + dy);
+
+            // (11)
             float dr = r * ((r + d) * sinB - p1.y * cosB) / ((r + d) * cosB + p1.y * sinB - r - R) * dB;
             float r_new = r + dr;
-            float2 p2_new(r_new * std::cos(B_new), r_new * std::sin(B_new));
-            float R_new = length(p2_new - p1_new);
+            float2 p2_new = r_new * float2(std::cos(B_new), std::sin(B_new));
 
             // new directions
-            float2 K_int_new = normalize(p2_new - p1_new);
-            float2 K_out_new = -normalize(p2_new);
-            float2 n1_new = normalize(K_int_new - K_in);
-            float2 n2_new = normalize(K_out_new - K_int_new);
+            float2 K_int_new = p2_new - p1_new;
+            float R_new = length(K_int_new);
+            K_int_new /= R_new;
+            float2 K_out_new = -p2_new / r_new;
+            float2 n1_new = K_int_new - K_in;
+            float2 n2_new = K_out_new - K_int_new;
 
             // store coordinates and normals
             M1.addSegment(p1, p1_new, n1, n1_new);
@@ -154,6 +167,7 @@ struct TwoMirrorConcentrator {
         }
     }
 
+    // trace the path of a ray in the system
     void traceRay(std::vector<std::tuple<float2, float2, float2, float2>>& rayPaths, const Ray& ray1) {
 
         // check intersection with mirror 1
@@ -182,20 +196,24 @@ int main(int argc, char* argv[]) {
 
     // compute two-mirror concentrator coordinates
     const TargetShape targetShape = TargetShape::CYLINDRICAL;
+    bool inverted;
+    float L;
     const float f = 1.0f;
     const float2 K_in(-1.0f, 0.0f);
-    float dy = 0.001f;
-    float L, B_max;
+    float dB = 0.001f;
+    float B_max;
     if (targetShape == TargetShape::FLAT) {
+        inverted = false;
         L = 8.0f * f;
         B_max = 80.0f * DEG_TO_RAD;
     }
     else if (targetShape == TargetShape::CYLINDRICAL) {
+        inverted = true;
         L = 6.0f * f;
         B_max = 150.0f * DEG_TO_RAD;
     }
     TwoMirrorConcentrator TMC;
-    TMC.build(targetShape, L, f, K_in, dy, B_max);
+    TMC.build(targetShape, inverted, L, f, K_in, dB, B_max);
 
 
 
