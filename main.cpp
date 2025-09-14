@@ -20,12 +20,17 @@
 #include "linalg.h"
 using namespace linalg::aliases;
 
+// floating-point precision
+using float_type = double;
+constexpr int NUMBER_OF_DIMENSIONS = 2;
+typedef linalg::vec<float_type, NUMBER_OF_DIMENSIONS> float_vec;
+
 // global constants
-constexpr float PI = 3.14159265358979f;
-constexpr float DEG_TO_RAD = PI / 180.0f;
-constexpr float RAD_TO_DEG = 180.0f / PI;
-float EPSILON = 0.01f;
-float EPSILON_OVER_TWO = EPSILON / 2.0f;
+constexpr float_type PI = 3.14159265358979;
+constexpr float_type DEG_TO_RAD = PI / 180;
+constexpr float_type RAD_TO_DEG = 180 / PI;
+constexpr float_type EPSILON = 0.01;
+constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -33,13 +38,13 @@ float EPSILON_OVER_TWO = EPSILON / 2.0f;
 
 // ray
 struct Ray {
-    float2 o, d;
-    Ray(const float2& o, const float2& d) : o(o), d(d) {}
+    float_vec o, d;
+    Ray(const float_vec& o, const float_vec& d) : o(o), d(d) {}
 };
 
 // hit info
 struct HitInfo {
-    float2 P, N;
+    float_vec P, N;
 };
 
 // target shape
@@ -52,11 +57,11 @@ enum struct TargetShape {
 struct Mirror {
 
     // coordinates and normals of the line segments of the mirror
-    std::vector<std::pair<float2, float2>> segments;
-    std::vector<std::pair<float2, float2>> normals;
+    std::vector<std::pair<float_vec, float_vec>> segments;
+    std::vector<std::pair<float_vec, float_vec>> normals;
 
     // add coordinates and normals of a line segment to the mirror
-    void addSegment(const float2& p1, const float2& p2, const float2& n1, const float2& n2) {
+    void addSegment(const float_vec& p1, const float_vec& p2, const float_vec& n1, const float_vec& n2) {
         segments.emplace_back(p1, p2);
         normals.emplace_back(n1, n2);
     }
@@ -71,12 +76,12 @@ struct Mirror {
         for (int i = 0; i < n; ++i) {
 
             // check parallel
-            float2 segmentDirection = segments[i].second - segments[i].first;
-            float denom = cross(segmentDirection, ray.d);
+            float_vec segmentDirection = segments[i].second - segments[i].first;
+            float_type denom = cross(segmentDirection, ray.d);
             if (denom == 0) continue;
 
             // intersection
-            float t = cross((ray.o - segments[i].first), ray.d) / denom;
+            float_type t = cross((ray.o - segments[i].first), ray.d) / denom;
             if (-0.00001 <= t && t <= 1.00001) {
                 hitInfo.P = segments[i].first + t * segmentDirection;
                 hitInfo.N = normalize(t * normals[i].second + (1 - t) * normals[i].first);
@@ -97,62 +102,62 @@ struct TwoMirrorConcentrator {
     Mirror M1, M2;
 
     // compute the line segments of the two mirrors
-    void build(const TargetShape& targetShape, const bool& inverted, const float& L, const float& f, const float2& K_in, const float& dB, const float& B_max) {
+    void build(const TargetShape& targetShape, const bool& inverted, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max) {
 
         // outgoing intensity to target
-        const auto& S = [=](const float beta) {
+        const auto& S = [=](const float_type beta) {
             if (targetShape == TargetShape::FLAT) return std::cos(beta);
-            else if (targetShape == TargetShape::CYLINDRICAL) return 1.0f;
-            else return 0.0f;
+            else if (targetShape == TargetShape::CYLINDRICAL) return float_type(1);
+            else return float_type(0);
         };
 
         // initial conditions
-        float2 p1(-L, 0.0f);
-        float2 p2(f, 0.0f);
-        float2 K_int = p2 - p1;
-        float R = length(K_int);
+        float_vec p1(-L, 0);
+        float_vec p2(f, 0);
+        float_vec K_int = p2 - p1;
+        float_type R = length(K_int);
         K_int /= R;
-        float2 K_out = -p2;
-        float r = length(K_out);
+        float_vec K_out = -p2;
+        float_type r = length(K_out);
         K_out /= r;
-        float2 n1 = K_int - K_in;
-        float2 n2 = K_out - K_int;
+        float_vec n1 = K_int - K_in;
+        float_vec n2 = K_out - K_int;
 
         // numerical integration
-        float B = 0.0f;
+        float_type B = 0;
         while (B < B_max) {
 
             // step in beta
-            float B_new = B + dB;
+            float_type B_new = B + dB;
 
             // precomputation
-            float sinB = std::sin(B);
-            float cosB = std::cos(B);
-            float d = R - 2.0f * (L + f);
+            float_type sinB = std::sin(B);
+            float_type cosB = std::cos(B);
+            float_type d = R - 2 * (L + f);
 
             // (7)
-            float dy = (inverted ? -1.0f : 1.0f) * S(B) * dB;
-            float dx = dy * (p1.y - r * sinB) / (r * (cosB - 1.0f) + 2.0f * (L + f));
-            float2 p1_new(p1.x + dx, p1.y + dy);
+            float_type dy = (inverted ? -1 : 1) * S(B) * dB;
+            float_type dx = dy * (p1.y - r * sinB) / (r * (cosB - 1) + 2 * (L + f));
+            float_vec p1_new(p1.x + dx, p1.y + dy);
 
             // (11)
-            float dr = r * ((r + d) * sinB - p1.y * cosB) / ((r + d) * cosB + p1.y * sinB - r - R) * dB;
-            float r_new = r + dr;
-            float2 p2_new = r_new * float2(std::cos(B_new), std::sin(B_new));
+            float_type dr = r * ((r + d) * sinB - p1.y * cosB) / ((r + d) * cosB + p1.y * sinB - r - R) * dB;
+            float_type r_new = r + dr;
+            float_vec p2_new = r_new * float_vec(std::cos(B_new), std::sin(B_new));
 
             // new directions
-            float2 K_int_new = p2_new - p1_new;
-            float R_new = length(K_int_new);
+            float_vec K_int_new = p2_new - p1_new;
+            float_type R_new = length(K_int_new);
             K_int_new /= R_new;
-            float2 K_out_new = -p2_new / r_new;
-            float2 n1_new = K_int_new - K_in;
-            float2 n2_new = K_out_new - K_int_new;
+            float_vec K_out_new = -p2_new / r_new;
+            float_vec n1_new = K_int_new - K_in;
+            float_vec n2_new = K_out_new - K_int_new;
 
             // store coordinates and normals
             M1.addSegment(p1, p1_new, n1, n1_new);
-            M1.addSegment(float2(p1.x, -p1.y), float2(p1_new.x, -p1_new.y), float2(n1.x, -n1.y), float2(n1_new.x, -n1_new.y));
+            M1.addSegment(float_vec(p1.x, -p1.y), float_vec(p1_new.x, -p1_new.y), float_vec(n1.x, -n1.y), float_vec(n1_new.x, -n1_new.y));
             M2.addSegment(p2, p2_new, n2, n2_new);
-            M2.addSegment(float2(p2.x, -p2.y), float2(p2_new.x, -p2_new.y), float2(n2.x, -n2.y), float2(n2_new.x, -n2_new.y));
+            M2.addSegment(float_vec(p2.x, -p2.y), float_vec(p2_new.x, -p2_new.y), float_vec(n2.x, -n2.y), float_vec(n2_new.x, -n2_new.y));
 
             // update
             p1 = p1_new;
@@ -168,7 +173,7 @@ struct TwoMirrorConcentrator {
     }
 
     // trace the path of a ray in the system
-    void traceRay(std::vector<std::tuple<float2, float2, float2, float2>>& rayPaths, const Ray& ray1) {
+    void traceRay(std::vector<std::tuple<float_vec, float_vec, float_vec, float_vec>>& rayPaths, const Ray& ray1) {
 
         // check intersection with mirror 1
         if (HitInfo hit1; M1.intersect(hit1, ray1)) {
@@ -178,7 +183,8 @@ struct TwoMirrorConcentrator {
             if (HitInfo hit2; M2.intersect(hit2, ray2)) {
 
                 // compute point through target and store path of ray
-                rayPaths.emplace_back(ray1.o, hit1.P, hit2.P, hit2.P + 10.0f * normalize(ray2.d - 2 * dot(hit2.N, ray2.d) * hit2.N));
+                const float_type len = 10;
+                rayPaths.emplace_back(ray1.o, hit1.P, hit2.P, hit2.P + len * normalize(ray2.d - 2 * dot(hit2.N, ray2.d) * hit2.N));
             }
         }
     }
@@ -197,20 +203,20 @@ int main(int argc, char* argv[]) {
     // compute two-mirror concentrator coordinates
     const TargetShape targetShape = TargetShape::CYLINDRICAL;
     bool inverted;
-    float L;
-    const float f = 1.0f;
-    const float2 K_in(-1.0f, 0.0f);
-    float dB = 0.001f;
-    float B_max;
+    float_type L;
+    const float_type f = 1;
+    const float_vec K_in(-1, 0);
+    float_type dB = 0.001;
+    float_type B_max;
     if (targetShape == TargetShape::FLAT) {
         inverted = false;
-        L = 8.0f * f;
-        B_max = 80.0f * DEG_TO_RAD;
+        L = 8 * f;
+        B_max = 80 * DEG_TO_RAD;
     }
     else if (targetShape == TargetShape::CYLINDRICAL) {
         inverted = true;
-        L = 6.0f * f;
-        B_max = 150.0f * DEG_TO_RAD;
+        L = 6 * f;
+        B_max = 150 * DEG_TO_RAD;
     }
     TwoMirrorConcentrator TMC;
     TMC.build(targetShape, inverted, L, f, K_in, dB, B_max);
@@ -218,26 +224,26 @@ int main(int argc, char* argv[]) {
 
 
     // ray trace
-    std::vector<std::tuple<float2, float2, float2, float2>> rayPaths;
+    std::vector<std::tuple<float_vec, float_vec, float_vec, float_vec>> rayPaths;
 
     // extreme rays
-    float extremeRayDirectionX = -std::cos(EPSILON_OVER_TWO);
-    float extremeRayDirectionY = std::sin(EPSILON_OVER_TWO);
-    float2 extremeRayDirectionPositive(extremeRayDirectionX, extremeRayDirectionY);
-    float2 extremeRayDirectionNegative(extremeRayDirectionX, -extremeRayDirectionY);
+    float_type extremeRayDirectionX = -std::cos(EPSILON_OVER_TWO);
+    float_type extremeRayDirectionY = std::sin(EPSILON_OVER_TWO);
+    float_vec extremeRayDirectionPositive(extremeRayDirectionX, extremeRayDirectionY);
+    float_vec extremeRayDirectionNegative(extremeRayDirectionX, -extremeRayDirectionY);
 
     // iterate over y
-    const float y_max = 3.0f;
-    float y = -y_max;
-    const float increment = 0.1f;
+    const float_type y_max = 3;
+    float_type y = -y_max;
+    const float_type increment = 0;
     while (y < y_max) {
 
         // trace positive extreme ray
-        const Ray extremeRayPositive(float2(0.0f, y), extremeRayDirectionPositive);
+        const Ray extremeRayPositive(float_vec(0, y), extremeRayDirectionPositive);
         TMC.traceRay(rayPaths, extremeRayPositive);
 
         // trace negative extreme ray
-        const Ray extremeRayNegative(float2(0.0f, y), extremeRayDirectionNegative);
+        const Ray extremeRayNegative(float_vec(0, y), extremeRayDirectionNegative);
         TMC.traceRay(rayPaths, extremeRayNegative);
 
         // update y
