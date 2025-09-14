@@ -2,7 +2,7 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-//  compile: "g++-15 main.cpp"
+//  compile: "compiler -std=c++17 main.cpp", compiler = "g++-15", "g++", "clang++"
 //      run: "./a.out"
 //     plot: run results.ipynb
 
@@ -198,7 +198,7 @@ struct TwoMirrorConcentrator {
 // main
 int main(int argc, char* argv[]) {
 
-
+    std::cout << "Building two-mirror concentrator ... ";
 
     // compute two-mirror concentrator coordinates
     const TargetShape targetShape = TargetShape::CYLINDRICAL;
@@ -221,7 +221,8 @@ int main(int argc, char* argv[]) {
     TwoMirrorConcentrator TMC;
     TMC.build(targetShape, inverted, L, f, K_in, dB, B_max);
 
-
+    std::cout << "Done." << std::endl;
+    std::cout << "Tracing rays ... ";
 
     // ray trace
     std::vector<std::tuple<float_vec, float_vec, float_vec, float_vec>> rayPaths;
@@ -235,7 +236,7 @@ int main(int argc, char* argv[]) {
     // iterate over y
     const float_type y_max = 3;
     float_type y = -y_max;
-    const float_type increment = 0;
+    const float_type increment = 0.1;
     while (y < y_max) {
 
         // trace positive extreme ray
@@ -250,7 +251,8 @@ int main(int argc, char* argv[]) {
         y += increment;
     }
 
-
+    std::cout << "Done." << std::endl;
+    std::cout << "Writing to .csv ... ";
 
     // export data
     std::ofstream file;
@@ -276,6 +278,8 @@ int main(int argc, char* argv[]) {
         file << std::get<3>(rayPath).x << "," << std::get<3>(rayPath).y << "\n";
     }
     file.close();
+
+    std::cout << "Done." << std::endl;
 
 }
 
