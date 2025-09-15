@@ -112,19 +112,11 @@ struct TwoMirrorConcentrator {
         };
 
         // initial conditions
-        float_vec p1(-L, 0);
-        float_vec p2(f, 0);
-        float_vec K_int = p2 - p1;
-        float_type R = length(K_int);
-        K_int /= R;
-        float_vec K_out = -p2;
-        float_type r = length(K_out);
-        K_out /= r;
-        float_vec n1 = K_int - K_in;
-        float_vec n2 = K_out - K_int;
+        float_vec p(-L, 0), pp(f, 0), n(1, 0), np(-1, 0);
+        float_type R(L + f), r(f);
 
         // numerical integration
-        float_type B = 0;
+        float_type B(0);
         while (B < B_max) {
 
             // step in beta
@@ -137,38 +129,105 @@ struct TwoMirrorConcentrator {
 
             // (7)
             float_type dy = (inverted ? -1 : 1) * S(B) * dB;
-            float_type dx = dy * (p1.y - r * sinB) / (r * (cosB - 1) + 2 * (L + f));
-            float_vec p1_new(p1.x + dx, p1.y + dy);
+            float_type dx = dy * (p.y - r * sinB) / (r * (cosB - 1) + 2 * (L + f));
+            float_vec p_new(p.x + dx, p.y + dy);
 
             // (11)
-            float_type dr = r * ((r + d) * sinB - p1.y * cosB) / ((r + d) * cosB + p1.y * sinB - r - R) * dB;
+            float_type dr = r * ((r + d) * sinB - p.y * cosB) / ((r + d) * cosB + p.y * sinB - r - R) * dB;
             float_type r_new = r + dr;
-            float_vec p2_new = r_new * float_vec(std::cos(B_new), std::sin(B_new));
+            float_vec pp_new = r_new * float_vec(std::cos(B_new), std::sin(B_new));
 
             // new directions
-            float_vec K_int_new = p2_new - p1_new;
-            float_type R_new = length(K_int_new);
-            K_int_new /= R_new;
-            float_vec K_out_new = -p2_new / r_new;
-            float_vec n1_new = K_int_new - K_in;
-            float_vec n2_new = K_out_new - K_int_new;
+            float_vec K_int = pp_new - p_new;
+            float_type R_new = length(K_int);
+            K_int /= R_new;
+            float_vec K_out = -pp_new / r_new;
+            float_vec n_new = normalize(K_int - K_in);
+            float_vec np_new = normalize(K_out - K_int);
 
             // store coordinates and normals
-            M1.addSegment(p1, p1_new, n1, n1_new);
-            M1.addSegment(float_vec(p1.x, -p1.y), float_vec(p1_new.x, -p1_new.y), float_vec(n1.x, -n1.y), float_vec(n1_new.x, -n1_new.y));
-            M2.addSegment(p2, p2_new, n2, n2_new);
-            M2.addSegment(float_vec(p2.x, -p2.y), float_vec(p2_new.x, -p2_new.y), float_vec(n2.x, -n2.y), float_vec(n2_new.x, -n2_new.y));
+            M1.addSegment(p, p_new, n, n_new);
+            M2.addSegment(pp, pp_new, np, np_new);
 
             // update
-            p1 = p1_new;
-            p2 = p2_new;
-            K_int = K_int_new;
-            K_out = K_out_new;
-            n1 = n1_new;
-            n2 = n2_new;
-            r = r_new;
+            p = p_new;
+            pp = pp_new;
+            n = n_new;
+            np = np_new;
             R = R_new;
+            r = r_new;
             B = B_new;
+        }
+    }
+
+    // compute the line segments of the two mirrors
+    void build2(const TargetShape& targetShape, const bool& inverted, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dy, const float_type& B_max) {
+
+        // incoming intensity to M1
+        const auto& I = [=](const float_type alpha) {
+            if (targetShape == TargetShape::FLAT) return std::cos(alpha);
+            else if (targetShape == TargetShape::CYLINDRICAL) return float_type(1);
+            else return float_type(0);
+        };
+
+        // outgoing intensity to target
+        const auto& S = [=](const float_type beta) {
+            if (targetShape == TargetShape::FLAT) return std::cos(beta);
+            else if (targetShape == TargetShape::CYLINDRICAL) return float_type(1);
+            else return float_type(0);
+        };
+
+        // initial conditions
+        float_type x(-L), y(0), xp(f), yp(0), R(L + f), r(f), dx_dy(0);
+        float_vec n(1, 0), np(-1, 0);
+
+        // numerical integration
+        float_type B(0), Br(0);
+        while (std::abs(B) < B_max) {
+
+            const float_type y_new = y + dy;
+            const float_type dx = dx_dy * (y_new - y);
+            const float_type x_new = x + dx;
+
+            const float_type Br_new = cross(K_in, float_vec(x_new + L, y_new));
+            const float_type dB = (inverted ? -1 : 1) * I(Br) / S(B) * (Br_new - Br); // * sign(dy)
+            const float_type B_new = B + dB;
+
+            const float_vec step(np.y, -np.x);
+            const float_vec p_hat(std::cos(B), std::sin(B));
+            const float_type sina = cross(p_hat, step);
+
+            const float_vec p2_new = float_vec(xp, yp) + r * std::sin(dB) / sina * step;
+            const float_type xp_new = p2_new.x;
+            const float_type yp_new = p2_new.y;
+
+            const float_type r_new = sqrt(xp_new * xp_new + yp_new * yp_new);
+            const float_type R_new = sqrt((xp_new - x_new) * (xp_new - x_new) + (yp_new - y_new) * (yp_new - y_new));
+            const float_vec K_int = float_vec(xp_new - x_new, yp_new - y_new) / R_new;
+            const float_vec K_out = -float_vec(std::cos(B_new), std::sin(B_new));
+
+            float_vec n_new = K_int - K_in;
+            float_vec np_new = K_out - K_int;
+            const float_type dx_dy_new = -n_new.y / n_new.x;
+            n_new = normalize(n_new);
+            np_new = normalize(np_new);
+
+            M1.addSegment(float_vec(x, y), float_vec(x_new, y_new), n, n_new);
+            M1.addSegment(float_vec(x, -y), float_vec(x_new, -y_new), float_vec(n.x, -n.y), float_vec(n_new.x, -n_new.y));
+            M2.addSegment(float_vec(xp, yp), p2_new, np, np_new);
+            M2.addSegment(float_vec(xp, -yp), float_vec(xp_new, -yp_new), float_vec(np.x, -np.y), float_vec(np_new.x, -np_new.y));
+
+            x = x_new;
+            y = y_new;
+            xp = xp_new;
+            yp = yp_new;
+            R = R_new;
+            r = r_new;
+            dx_dy = dx_dy_new;
+            n = n_new;
+            np = np_new;
+            B = B_new;
+            Br = Br_new;
         }
     }
 
@@ -183,7 +242,7 @@ struct TwoMirrorConcentrator {
             if (HitInfo hit2; M2.intersect(hit2, ray2)) {
 
                 // compute point through target and store path of ray
-                const float_type len = 10;
+                const float_type len = 6;
                 rayPaths.emplace_back(ray1.o, hit1.P, hit2.P, hit2.P + len * normalize(ray2.d - 2 * dot(hit2.N, ray2.d) * hit2.N));
             }
         }
@@ -195,18 +254,21 @@ struct TwoMirrorConcentrator {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+
+
 // main
 int main(int argc, char* argv[]) {
 
-    std::cout << "Building two-mirror concentrator ... ";
+
 
     // compute two-mirror concentrator coordinates
+    std::cout << "Building two-mirror concentrator ... ";
     const TargetShape targetShape = TargetShape::CYLINDRICAL;
     bool inverted;
     float_type L;
     const float_type f = 1;
     const float_vec K_in(-1, 0);
-    float_type dB = 0.001;
+    const float_type dB = 0.001;
     float_type B_max;
     if (targetShape == TargetShape::FLAT) {
         inverted = false;
@@ -220,41 +282,33 @@ int main(int argc, char* argv[]) {
     }
     TwoMirrorConcentrator TMC;
     TMC.build(targetShape, inverted, L, f, K_in, dB, B_max);
-
     std::cout << "Done." << std::endl;
+
+
+
+    // trace extreme rays
     std::cout << "Tracing rays ... ";
-
-    // ray trace
-    std::vector<std::tuple<float_vec, float_vec, float_vec, float_vec>> rayPaths;
-
-    // extreme rays
     float_type extremeRayDirectionX = -std::cos(EPSILON_OVER_TWO);
     float_type extremeRayDirectionY = std::sin(EPSILON_OVER_TWO);
     float_vec extremeRayDirectionPositive(extremeRayDirectionX, extremeRayDirectionY);
     float_vec extremeRayDirectionNegative(extremeRayDirectionX, -extremeRayDirectionY);
-
-    // iterate over y
-    const float_type y_max = 3;
+    std::vector<std::tuple<float_vec, float_vec, float_vec, float_vec>> positivePaths, negativePaths;
+    const float_type y_max = 5;
     float_type y = -y_max;
     const float_type increment = 0.1;
     while (y < y_max) {
-
-        // trace positive extreme ray
         const Ray extremeRayPositive(float_vec(0, y), extremeRayDirectionPositive);
-        TMC.traceRay(rayPaths, extremeRayPositive);
-
-        // trace negative extreme ray
+        TMC.traceRay(positivePaths, extremeRayPositive);
         const Ray extremeRayNegative(float_vec(0, y), extremeRayDirectionNegative);
-        TMC.traceRay(rayPaths, extremeRayNegative);
-
-        // update y
+        TMC.traceRay(negativePaths, extremeRayNegative);
         y += increment;
     }
-
     std::cout << "Done." << std::endl;
-    std::cout << "Writing to .csv ... ";
+
+
 
     // export data
+    std::cout << "Writing to .csv ... ";
     std::ofstream file;
 
     // two-mirror concentrator coordinates
@@ -263,15 +317,23 @@ int main(int argc, char* argv[]) {
     int m = static_cast<int>(TMC.M1.segments.size());
     for (; i < m; ++i) {
         file << TMC.M1.segments[i].first.x << "," << TMC.M1.segments[i].first.y << ",";
-        file << TMC.M1.segments[i].second.x << "," << TMC.M1.segments[i].second.y << ",";
-        file << TMC.M2.segments[i].first.x << "," << TMC.M2.segments[i].first.y << ",";
-        file << TMC.M2.segments[i].second.x << "," << TMC.M2.segments[i].second.y << "\n";
+        file << TMC.M2.segments[i].first.x << "," << TMC.M2.segments[i].first.y << "\n";
     }
+    file << TMC.M1.segments[i - 1].second.x << "," << TMC.M1.segments[i - 1].second.y << ",";
+    file << TMC.M2.segments[i - 1].second.x << "," << TMC.M2.segments[i - 1].second.y << "\n";
     file.close();
 
     // ray paths
-    file.open("data_rays.csv");
-    for (auto rayPath : rayPaths) {
+    file.open("data_rays_pos.csv");
+    for (auto rayPath : positivePaths) {
+        file << std::get<0>(rayPath).x << "," << std::get<0>(rayPath).y << ",";
+        file << std::get<1>(rayPath).x << "," << std::get<1>(rayPath).y << ",";
+        file << std::get<2>(rayPath).x << "," << std::get<2>(rayPath).y << ",";
+        file << std::get<3>(rayPath).x << "," << std::get<3>(rayPath).y << "\n";
+    }
+    file.close();
+    file.open("data_rays_neg.csv");
+    for (auto rayPath : negativePaths) {
         file << std::get<0>(rayPath).x << "," << std::get<0>(rayPath).y << ",";
         file << std::get<1>(rayPath).x << "," << std::get<1>(rayPath).y << ",";
         file << std::get<2>(rayPath).x << "," << std::get<2>(rayPath).y << ",";
@@ -279,9 +341,12 @@ int main(int argc, char* argv[]) {
     }
     file.close();
 
+    // finished
     std::cout << "Done." << std::endl;
 
 }
+
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
