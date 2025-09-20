@@ -34,6 +34,12 @@ constexpr float_type RAD_TO_DEG = 180 / PI;
 constexpr float_type EPSILON = 0.01;
 constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
 
+// choose what to build
+constexpr bool FLAT_TARGET = true;
+constexpr bool CYLINDRICAL_TARGET = true;
+constexpr bool PARABOLIC_MIRROR = false;
+constexpr bool SCALE_INVARIANT = false;
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -100,7 +106,7 @@ struct Mirror {
 // two-mirror concentrator
 struct TwoMirrorConcentrator {
 
-    // two mirrors
+    // fields
     Mirror M1, M2;
 
     // compute the line segments of the two mirrors
@@ -188,6 +194,30 @@ struct TwoMirrorConcentrator {
         }
     }
 
+    // trace multiple rays across y direction
+    void traceRays(std::vector<std::tuple<float_vec, float_vec, float_vec, float_vec>>& rayPaths, const float_vec& rayDirection,
+        const float_type& h_min, const float_type& h_inc, const float_type& h_max, const std::string& fileName) {
+
+        // trace
+        float_type h = h_min;
+        while (h < h_max) {
+            const Ray ray(float_vec(0, h), rayDirection);
+            traceRay(rayPaths, ray);
+            h += h_inc;
+        }
+
+        // write
+        std::ofstream file;
+        file.open(fileName);
+        for (auto rayPath : rayPaths) {
+            file << std::get<0>(rayPath).x << "," << std::get<0>(rayPath).y << ",";
+            file << std::get<1>(rayPath).x << "," << std::get<1>(rayPath).y << ",";
+            file << std::get<2>(rayPath).x << "," << std::get<2>(rayPath).y << ",";
+            file << std::get<3>(rayPath).x << "," << std::get<3>(rayPath).y << "\n";
+        }
+        file.close();
+    }
+
 };
 
 // parabolic mirror
@@ -222,145 +252,167 @@ struct ParabolicMirror {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// build two-mirror concentrator
+TwoMirrorConcentrator build2MC(const TargetShape& ts, const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max,
+    const std::string& fileName) {
+
+    // build
+    TwoMirrorConcentrator TMC;
+    TMC.build(ts, inv, L, f, K_in, dB, B_max);
+
+    // write
+    std::ofstream file;
+    file.open(fileName);
+    for (int i = 0, n = static_cast<int>(TMC.M1.segments.size()); i < n; ++i) {
+        file << TMC.M1.segments[i].first.x << "," << TMC.M1.segments[i].first.y << ",";
+        file << TMC.M2.segments[i].first.x << "," << TMC.M2.segments[i].first.y << "\n";
+    }
+    file << TMC.M1.segments.back().second.x << "," << TMC.M1.segments.back().second.y << ",";
+    file << TMC.M2.segments.back().second.x << "," << TMC.M2.segments.back().second.y << "\n";
+    file.close();
+
+    // return
+    return TMC;
+}
+
+// build parabolic mirror
+ParabolicMirror buildPM(const float_type& f, const float_type& dy, const float_type& B_max,
+    const std::string& fileName) {
+
+    // build
+    ParabolicMirror PM;
+    PM.build(f, dy, B_max);
+
+    // write
+    std::ofstream file;
+    file.open(fileName);
+    for (auto segment : PM.M.segments) file << segment.first.x << "," << segment.first.y << "\n";
+    file.close();
+
+    // return
+    return PM;
+}
+
+
+
 // main
 int main(int argc, char* argv[]) {
 
-
-
-    // compute two-mirror concentrator coordinates
-    std::cout << "Building two-mirror concentrator... ";
-    const TargetShape targetShape = TargetShape::CYLINDRICAL;
-    bool inverted;
-    float_type L, f;
+    // input
     const float_vec K_in(-1, 0);
-    const float_type dB = 0.001;
-    float_type B_max;
-    if (targetShape == TargetShape::FLAT) {
-        inverted = false;
-        f = 0.2;
-        L = 8 * f;
-        B_max = 80 * DEG_TO_RAD;
+    const float_type dB(0.01);
+
+    // flat target
+    TwoMirrorConcentrator TMCflat;
+    ParabolicMirror PMflat;
+    if (FLAT_TARGET) {
+        const TargetShape ts(TargetShape::FLAT);
+        const bool inv(false);
+        const float_type f(0.2);
+        const float_type L(8 * f);
+        const float_type B_max(80 * DEG_TO_RAD);
+        TMCflat = build2MC(ts, inv, L, f, K_in, dB, B_max, "data_2mc_flat.csv");
+
+        // parabolic mirror
+        if (PARABOLIC_MIRROR) {
+            const float_type dy(dB);
+            PMflat = buildPM(f, dy, B_max, "data_pm_flat.csv");
+        }
     }
-    else if (targetShape == TargetShape::CYLINDRICAL) {
-        inverted = true;
-        f = 0.5;
-        L = 6 * f;
-        B_max = 150 * DEG_TO_RAD;
+
+    // cylindrical target
+    TwoMirrorConcentrator TMCcyl;
+    ParabolicMirror PMcyl;
+    if (CYLINDRICAL_TARGET) {
+        const TargetShape ts(TargetShape::CYLINDRICAL);
+        const bool inv(true);
+        const float_type f(0.5);
+        const float_type L(6 * f);
+        const float_type B_max(150 * DEG_TO_RAD);
+        TMCcyl = build2MC(ts, inv, L, f, K_in, dB, B_max, "data_2mc_cyl.csv");
+
+        // parabolic mirror
+        if (PARABOLIC_MIRROR) {
+            const float_type dy(dB);
+            PMcyl = buildPM(f, dy, B_max, "data_pm_cyl.csv");
+        }
     }
-    TwoMirrorConcentrator TMC;
-    TMC.build(targetShape, inverted, L, f, K_in, dB, B_max);
-    std::cout << "Done." << std::endl;
+
+    // scale-invariant
+    if (SCALE_INVARIANT) {
+        const TargetShape ts(TargetShape::CYLINDRICAL);
+        const bool inv(true);
+        constexpr float_type scale(10);
+        constexpr float_type f(scale * 0.5);
+        constexpr float_type L(scale * 3);
+        constexpr float_type B_max(150 * DEG_TO_RAD);
+        build2MC(ts, inv, L, f, K_in, dB, B_max, "data_scale_inv.csv");
+    }
 
 
 
     // ray trace
-    std::cout << "Tracing rays... ";
-    std::vector<std::tuple<float_vec, float_vec, float_vec, float_vec>> TMCa, TMCb, TMCc;
-    float_type extrRayDirX = -std::cos(EPSILON_OVER_TWO);
-    float_type extrRayDirY = std::sin(EPSILON_OVER_TWO);
-    float_vec posExtrRayDir(extrRayDirX, extrRayDirY);
-    float_vec negExtrRayDir(extrRayDirX, -extrRayDirY);
-    const float_type y_max = 5;
-    float_type y = -y_max;
-    const float_type increment = 0.01;
-    while (y < y_max) {
-        const Ray meanRay(float_vec(0, y), float_vec(-1, 0));
-        TMC.traceRay(TMCa, meanRay);
-        const Ray posExtrRay(float_vec(0, y), posExtrRayDir);
-        TMC.traceRay(TMCb, posExtrRay);
-        const Ray negExtrRay(float_vec(0, y), negExtrRayDir);
-        TMC.traceRay(TMCc, negExtrRay);
-        y += increment;
+    const float_type h_inc = 0.01;
+    if (FLAT_TARGET) {
+        std::vector<std::tuple<float_vec, float_vec, float_vec, float_vec>> meanPaths;
+        TMCflat.traceRays(meanPaths, K_in, -TMCflat.M1.segments.back().second.y, h_inc, TMCflat.M1.segments.back().second.y, "data_2mc_flat_mean.csv");
+        std::vector<std::tuple<float_vec, float_vec, float_vec, float_vec>> extrPosPaths;
+        float_vec extrPosDir(-std::cos(EPSILON_OVER_TWO), std::sin(EPSILON_OVER_TWO));
+        TMCflat.traceRays(extrPosPaths, extrPosDir, -TMCflat.M1.segments.back().second.y, h_inc, TMCflat.M1.segments.back().second.y, "data_2mc_flat_extr_pos.csv");
+        std::vector<std::tuple<float_vec, float_vec, float_vec, float_vec>> extrNegPaths;
+        float_vec extrNegDir(-std::cos(EPSILON_OVER_TWO), -std::sin(EPSILON_OVER_TWO));
+        TMCflat.traceRays(extrNegPaths, extrNegDir, -TMCflat.M1.segments.back().second.y, h_inc, TMCflat.M1.segments.back().second.y, "data_2mc_flat_extr_neg.csv");
     }
-    std::cout << "Done." << std::endl;
-
-
-
-    // export data
-    std::cout << "Writing to .csv... ";
-    std::ofstream file;
-
-    // two-mirror concentrator coordinates
-    file.open("data_2mc.csv");
-    int i = 0;
-    int m = static_cast<int>(TMC.M1.segments.size());
-    for (; i < m; ++i) {
-        file << TMC.M1.segments[i].first.x << "," << TMC.M1.segments[i].first.y << ",";
-        file << TMC.M2.segments[i].first.x << "," << TMC.M2.segments[i].first.y << "\n";
+    if (CYLINDRICAL_TARGET) {
+        std::vector<std::tuple<float_vec, float_vec, float_vec, float_vec>> meanPaths;
+        TMCcyl.traceRays(meanPaths, K_in, TMCcyl.M1.segments.back().second.y, h_inc, -TMCcyl.M1.segments.back().second.y, "data_2mc_cyl_mean.csv");
+        std::vector<std::tuple<float_vec, float_vec, float_vec, float_vec>> extrPosPaths;
+        float_vec extrPosDir(-std::cos(EPSILON_OVER_TWO), std::sin(EPSILON_OVER_TWO));
+        TMCcyl.traceRays(extrPosPaths, extrPosDir, TMCcyl.M1.segments.back().second.y, h_inc, -TMCcyl.M1.segments.back().second.y, "data_2mc_cyl_extr_pos.csv");
+        std::vector<std::tuple<float_vec, float_vec, float_vec, float_vec>> extrNegPaths;
+        float_vec extrNegDir(-std::cos(EPSILON_OVER_TWO), -std::sin(EPSILON_OVER_TWO));
+        TMCcyl.traceRays(extrNegPaths, extrNegDir, TMCcyl.M1.segments.back().second.y, h_inc, -TMCcyl.M1.segments.back().second.y, "data_2mc_cyl_extr_neg.csv");
     }
-    file << TMC.M1.segments[i - 1].second.x << "," << TMC.M1.segments[i - 1].second.y << ",";
-    file << TMC.M2.segments[i - 1].second.x << "," << TMC.M2.segments[i - 1].second.y << "\n";
-    file.close();
-
-    // ray paths
-    file.open("data_mean_paths.csv");
-    for (auto rayPath : TMCa) {
-        file << std::get<0>(rayPath).x << "," << std::get<0>(rayPath).y << ",";
-        file << std::get<1>(rayPath).x << "," << std::get<1>(rayPath).y << ",";
-        file << std::get<2>(rayPath).x << "," << std::get<2>(rayPath).y << ",";
-        file << std::get<3>(rayPath).x << "," << std::get<3>(rayPath).y << "\n";
-    }
-    file.close();
-    file.open("data_pos_extr_paths.csv");
-    for (auto rayPath : TMCb) {
-        file << std::get<0>(rayPath).x << "," << std::get<0>(rayPath).y << ",";
-        file << std::get<1>(rayPath).x << "," << std::get<1>(rayPath).y << ",";
-        file << std::get<2>(rayPath).x << "," << std::get<2>(rayPath).y << ",";
-        file << std::get<3>(rayPath).x << "," << std::get<3>(rayPath).y << "\n";
-    }
-    file.close();
-    file.open("data_neg_extr_paths.csv");
-    for (auto rayPath : TMCc) {
-        file << std::get<0>(rayPath).x << "," << std::get<0>(rayPath).y << ",";
-        file << std::get<1>(rayPath).x << "," << std::get<1>(rayPath).y << ",";
-        file << std::get<2>(rayPath).x << "," << std::get<2>(rayPath).y << ",";
-        file << std::get<3>(rayPath).x << "," << std::get<3>(rayPath).y << "\n";
-    }
-    file.close();
-
-    // finished
-    std::cout << "Done." << std::endl;
 
 
+
+    /*
 
     // parabolic mirror
-    ParabolicMirror PM;
-    PM.build(f, 0.01, B_max);
-    file.open("data_pm.csv");
-    for (auto segment : PM.M.segments) file << segment.first.x << "," << segment.first.y << "\n";
-    file.close();
-    std::vector<std::tuple<float_vec, float_vec, float_vec>> PMa, PMb, PMc;
-    float_type h = -1;
-    while (h < 1) {
-        const Ray meanRay(float_vec(0, h), float_vec(-1, 0));
-        PM.traceRay(PMa, meanRay);
-        const Ray posExtrRay(float_vec(0, h), posExtrRayDir);
-        PM.traceRay(PMb, posExtrRay);
-        const Ray negExtrRay(float_vec(0, h), negExtrRayDir);
-        PM.traceRay(PMc, negExtrRay);
-        h += 0.01;
-    }
-    file.open("data_pm_a.csv");
-    for (auto path : PMa) {
-        file << std::get<0>(path).x << "," << std::get<0>(path).y << ",";
-        file << std::get<1>(path).x << "," << std::get<1>(path).y << ",";
-        file << std::get<2>(path).x << "," << std::get<2>(path).y << "\n";
-    }
-    file.close();
-    file.open("data_pm_b.csv");
-    for (auto path : PMb) {
-        file << std::get<0>(path).x << "," << std::get<0>(path).y << ",";
-        file << std::get<1>(path).x << "," << std::get<1>(path).y << ",";
-        file << std::get<2>(path).x << "," << std::get<2>(path).y << "\n";
-    }
-    file.close();
-    file.open("data_pm_c.csv");
-    for (auto path : PMc) {
-        file << std::get<0>(path).x << "," << std::get<0>(path).y << ",";
-        file << std::get<1>(path).x << "," << std::get<1>(path).y << ",";
-        file << std::get<2>(path).x << "," << std::get<2>(path).y << "\n";
-    }
-    file.close();
+    // std::vector<std::tuple<float_vec, float_vec, float_vec>> PMa, PMb, PMc;
+    // float_type h = -1;
+    // while (h < 1) {
+    //     const Ray meanRay(float_vec(0, h), float_vec(-1, 0));
+    //     PM.traceRay(PMa, meanRay);
+    //     const Ray posExtrRay(float_vec(0, h), posExtrRayDir);
+    //     PM.traceRay(PMb, posExtrRay);
+    //     const Ray negExtrRay(float_vec(0, h), negExtrRayDir);
+    //     PM.traceRay(PMc, negExtrRay);
+    //     h += 0.01;
+    // }
+    // file.open("data_pm_a.csv");
+    // for (auto path : PMa) {
+    //     file << std::get<0>(path).x << "," << std::get<0>(path).y << ",";
+    //     file << std::get<1>(path).x << "," << std::get<1>(path).y << ",";
+    //     file << std::get<2>(path).x << "," << std::get<2>(path).y << "\n";
+    // }
+    // file.close();
+    // file.open("data_pm_b.csv");
+    // for (auto path : PMb) {
+    //     file << std::get<0>(path).x << "," << std::get<0>(path).y << ",";
+    //     file << std::get<1>(path).x << "," << std::get<1>(path).y << ",";
+    //     file << std::get<2>(path).x << "," << std::get<2>(path).y << "\n";
+    // }
+    // file.close();
+    // file.open("data_pm_c.csv");
+    // for (auto path : PMc) {
+    //     file << std::get<0>(path).x << "," << std::get<0>(path).y << ",";
+    //     file << std::get<1>(path).x << "," << std::get<1>(path).y << ",";
+    //     file << std::get<2>(path).x << "," << std::get<2>(path).y << "\n";
+    // }
+    // file.close();
+
+    */
 
 }
 
