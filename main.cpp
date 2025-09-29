@@ -7,7 +7,6 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
-#include <ranges>
 #include <tuple>
 #include <vector>
 
@@ -29,7 +28,7 @@ constexpr float_type RAD_TO_DEG = 180 / PI;
 constexpr float_type EPSILON = 0.01;
 constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
 
-// choose what to build
+// switches
 constexpr bool INFINITE_SYSTEM = false;
 constexpr bool FINITE_SYSTEM = true;
 constexpr bool FLAT_TARGET = false;
@@ -61,13 +60,32 @@ namespace PCG32 {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+
+
 // ray
 struct Ray {
-
     float_vec o, d;
-
     Ray(const float_vec& o, const float_vec& d) : o(o), d(d) {}
+};
 
+// shape
+enum struct Shape {
+    FLAT,
+    CYLINDRICAL
+};
+
+// type
+enum struct Type {
+    SOURCE,
+    TARGET,
+    MIRROR
+};
+
+// hit info
+struct HitInfo {
+    float_type l;
+    float_vec p, n;
+    Type t;
 };
 
 // path
@@ -92,39 +110,27 @@ struct Path {
     
 };
 
-// hit info
-struct HitInfo {
 
-    float_type l;
-    float_vec p, n;
-
-};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// component
-struct Component {
 
+
+// geometry
+struct Geometry {
     virtual bool intersect(const Ray& ray, HitInfo& hitInfo) = 0;
-
-};
-
-// target shape
-enum struct Shape {
-
-    FLAT,
-    CYLINDRICAL
-    
 };
 
 // line segment
-struct LineSegment : Component {
+struct LineSegment : Geometry {
 
+    Shape shape;
+    Type type;
     float_vec p1, p2, n1, n2;
 
-    LineSegment(const float_vec& p1, const float_vec& p2, const float_vec& n1, const float_vec& n2) : p1(p1), p2(p2), n1(n1), n2(n2) {}
+    LineSegment(const Type& t, const float_vec& p1, const float_vec& p2, const float_vec& n1, const float_vec& n2) : shape(Shape::FLAT), type(t), p1(p1), p2(p2), n1(n1), n2(n2) {}
 
     bool intersect(const Ray& ray, HitInfo& hitInfo) override {
         const float_vec segDir = p2 - p1;
@@ -136,9 +142,27 @@ struct LineSegment : Component {
             hitInfo.l = t;
             hitInfo.p = ray.o + hitInfo.l * ray.d;
             hitInfo.n = normalize((1 - s) * n1 + s * n2);
+            hitInfo.t = type;
             return true;
         }
         return false;
+    }
+
+    Ray sampleMeanRay(const float_type& angle_max) {
+        const float_type s = PCG32::rand();
+        const float_vec p = (1 - s) * p1 + s * p2;
+        const float_vec n = (1 - s) * n1 + s * n2;
+        return Ray(p + A_LITTLE_BIT * n, n);
+    }
+
+    Ray sampleDiffuseRay(const float_type& angle_max) {
+        const Ray meanRay = sampleMeanRay(angle_max);
+        const float_vec n = meanRay.d;
+        const float_type theta = std::asin(2 * PCG32::rand() - 1);
+        const float_type cos0 = std::cos(theta);
+        const float_type sin0 = std::sin(theta);
+        const float_vec rotDir(n.x * cos0 - n.y * sin0, n.x * sin0 + n.y * cos0);
+        return Ray(meanRay.o, rotDir);
     }
 
     void writeToFile(std::ofstream& file) {
@@ -148,20 +172,23 @@ struct LineSegment : Component {
 };
 
 // circle
-struct Circle : Component {
+struct Circle : Geometry {
 
+    Shape shape;
+    Type type;
     float_vec c;
     float_type r;
 
-    Circle(const float_vec& c, const float_type& r) : c(c), r(r) {}
+    Circle(const Type& t, const float_vec& c, const float_type& r) : shape(Shape::CYLINDRICAL), type(t), c(c), r(r) {}
 
     bool intersect(const Ray& ray, HitInfo& hitInfo) override {
         const float_vec oc = c - ray.o;
         const float_type hyp2 = dot(oc, oc);
-        if (hyp2 <= r * r) return false;
+        if (hyp2 < r * r) return false;
         const float_type hyp = std::sqrt(hyp2);
         const float_vec ocDir = oc / hyp;
         const float_type cos0 = dot(ray.d, ocDir);
+        if (cos0 <= 0) return false;
         const float_type adj = hyp * cos0;
         const float_type d2 = hyp2 - adj * adj;
         if (d2 > r * r) return false;
@@ -174,23 +201,36 @@ struct Circle : Component {
             hitInfo.p = ray.o + hitInfo.l * ray.d;
         }
         hitInfo.n = normalize(hitInfo.p - c);
+        hitInfo.t = type;
         return true;
     }
 
-    float_vec sampleSurface() {
-        float_type theta = PCG32::rand() * PI_OVER_TWO;
-        return c + r * float_vec(-std::cos(theta), std::sin(theta));
+    Ray sampleMeanRay(const float_type& angle_max) {
+        const float_type theta = PCG32::rand() * 2 * angle_max + PI - angle_max;
+        const float_vec p = c + r * float_vec(std::cos(theta), std::sin(theta));
+        const float_vec n = (p - c) / r;
+        return Ray(p, n);
+    }
+
+    Ray sampleDiffuseRay(const float_type& angle_max) {
+        const Ray meanRay = sampleMeanRay(angle_max);
+        const float_vec n = meanRay.d;
+        const float_type theta = std::asin(2 * PCG32::rand() - 1);
+        const float_type cos0 = std::cos(theta);
+        const float_type sin0 = std::sin(theta);
+        const float_vec rotDir(n.x * cos0 - n.y * sin0, n.x * sin0 + n.y * cos0);
+        return Ray(meanRay.o, rotDir);
     }
 
 };
 
 // mirror
-struct Mirror : Component {
+struct Mirror : Geometry {
 
     std::vector<LineSegment> segments;
 
     void addSegment(const float_vec& p1, const float_vec& p2, const float_vec& n1, const float_vec& n2) {
-        segments.emplace_back(p1, p2, n1, n2);
+        segments.emplace_back(Type::MIRROR, p1, p2, n1, n2);
     }
 
     bool intersect(const Ray& ray, HitInfo& hitInfo) override {
@@ -209,7 +249,7 @@ struct Mirror : Component {
 };
 
 // two-mirror concentrator
-struct TwoMirrorConcentrator : Component {
+struct TwoMirrorConcentrator : Geometry {
 
     // fields
     Mirror m1, m2;
@@ -290,7 +330,7 @@ struct TwoMirrorConcentrator : Component {
     }
 
     // build finite system
-    void buildFinite(const Shape& s, const float_type& f1, const float_type& L, const float_type& f2, const float_type& da, const float_type& a_max) {
+    void buildFinite(const auto& Sa, const auto& SB, const float_type& f1, const float_type& L, const float_type& f2, const float_type& da, const float_type& a_max) {
 
         // initial conditions
         float_type a(0), B(0), r1(f1), r2(f2);
@@ -313,7 +353,7 @@ struct TwoMirrorConcentrator : Component {
             const float_vec p1_new(-r1_new * std::cos(a_new) - L, r1_new * std::sin(a_new));
 
             // M2
-            const float_type dB = da;
+            const float_type dB = Sa(a) * da / SB(B);
             const float_type B_new = B + dB;
             const float_type dr2 = (r1 * r2 * sinaB + L * r2 * sinB) / (r1 * cosaB + L * cosB - r1 + F) * dB;
             const float_type r2_new = r2 + dr2;
@@ -331,6 +371,8 @@ struct TwoMirrorConcentrator : Component {
             // store coordinates and normals
             m1.addSegment(p1, p1_new, n1, n1_new);
             m2.addSegment(p2, p2_new, n2, n2_new);
+            m1.addSegment(float_vec(p1.x, -p1.y), float_vec(p1_new.x, -p1_new.y), float_vec(n1.x, -n1.y), float_vec(n1_new.x, -n1_new.y));
+            m2.addSegment(float_vec(p2.x, -p2.y), float_vec(p2_new.x, -p2_new.y), float_vec(n2.x, -n2.y), float_vec(n2_new.x, -n2_new.y));
 
             // update
             a = a_new;
@@ -347,7 +389,7 @@ struct TwoMirrorConcentrator : Component {
 };
 
 // parabolic mirror
-struct ParabolicMirror {
+struct ParabolicMirror : Geometry {
 
     Mirror M;
 
@@ -375,20 +417,20 @@ struct ParabolicMirror {
 };
 
 // system
-struct System {
+struct Design {
 
-    std::vector<Component*> components;
+    std::vector<Geometry*> geometries;
 
-    void addComponent(Component* const component) {
-        components.push_back(component);
+    void addGeometry(Geometry* const geometry) {
+        geometries.push_back(geometry);
     }
 
     bool intersect(const Ray& ray, HitInfo& minHitInfo) {
         bool hit = false;
         HitInfo tempMinHitInfo;
         minHitInfo.l = std::numeric_limits<float_type>::max();
-        for (auto component : components) {
-            if ((*component).intersect(ray, tempMinHitInfo)) {
+        for (auto geometry : geometries) {
+            if ((*geometry).intersect(ray, tempMinHitInfo)) {
                 if (tempMinHitInfo.l < minHitInfo.l) {
                     hit = true;
                     minHitInfo = tempMinHitInfo;
@@ -406,12 +448,13 @@ struct System {
         while (i < 3) {
             if (HitInfo h; intersect(r, h)) {
                 path.addVertex(h.p);
+                if (h.t == Type::TARGET) return path;
                 float_vec reflectedDirection = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
                 r = Ray(h.p + A_LITTLE_BIT * reflectedDirection, reflectedDirection);
             }
             ++i;
         }
-        return path;
+        return Path();
     }
 
     std::vector<Path> rayTrace(const std::vector<Ray>& rays) {
@@ -424,54 +467,7 @@ struct System {
 
 };
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// build infinite two-mirror concentrator
-TwoMirrorConcentrator buildInf2MC(const Shape& s, const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max,
-    const std::string& fileName) {
-
-    // build
-    TwoMirrorConcentrator inf2MC;
-    inf2MC.buildInfinite(s, inv, L, f, K_in, dB, B_max);
-
-    // write
-    std::ofstream file;
-    file.open(fileName);
-
-    // for (int i = 0, n = static_cast<int>(inf2MC.M1.segments.size()); i < n; ++i) {
-    //     file << inf2MC.M1.segments[i].first.x << "," << inf2MC.M1.segments[i].first.y << ",";
-    //     file << inf2MC.M2.segments[i].first.x << "," << inf2MC.M2.segments[i].first.y << "\n";
-    // }
-    // file << inf2MC.M1.segments.back().second.x << "," << inf2MC.M1.segments.back().second.y << ",";
-    // file << inf2MC.M2.segments.back().second.x << "," << inf2MC.M2.segments.back().second.y << "\n";
-
-    file.close();
-
-    // return
-    return inf2MC;
-}
-
-// build parabolic mirror
-ParabolicMirror buildPM(const float_type& f, const float_type& dy, const float_type& B_max,
-    const std::string& fileName) {
-
-    // build
-    ParabolicMirror PM;
-    PM.build(f, dy, B_max);
-
-    // write
-    std::ofstream file;
-    file.open(fileName);
-
-    // for (auto segment : PM.M.segments) file << segment.first.x << "," << segment.first.y << "\n";
-
-    file.close();
-
-    // return
-    return PM;
-}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -486,37 +482,49 @@ int main(int argc, char* argv[]) {
     if (FINITE_SYSTEM) {
 
         // input
-        System system;
-        const Shape s = Shape::CYLINDRICAL;
-        const float_type f1(1), L(1), f2(1), da(0.0001), a_max(90 * DEG_TO_RAD);
+        const float_type f1(10), L(12), f2(6), da(0.001), a_max(55 * DEG_TO_RAD);
+        const float_type radius(f1 / 10);
 
         // source
-        Circle source(float_vec(-L, 0), f1 / 10);
-        system.addComponent(&source);
+        // LineSegment source(Type::SOURCE, float_vec(-L, -radius), float_vec(-L, radius), float_vec(-1, 0), float_vec(-1, 0));
+        Circle source(Type::SOURCE, float_vec(-L, 0), radius);
+        const auto& Sa = [=](const float_type& alpha) {
+            if (source.shape == Shape::FLAT) return std::cos(alpha);
+            else if (source.shape == Shape::CYLINDRICAL) return float_type(1);
+            else return float_type(0);
+        };
+        
+        // target
+        LineSegment target(Type::TARGET, float_vec(0, -radius), float_vec(0, radius), float_vec(1, 0), float_vec(1, 0));
+        // Circle target(Type::TARGET, float_vec(0, 0), radius);
+        const auto& SB = [=](const float_type& beta) {
+            if (target.shape == Shape::FLAT) return std::cos(beta);
+            else if (target.shape == Shape::CYLINDRICAL) return float_type(1);
+            else return float_type(0);
+        };
 
         // two-mirror concentrator
         TwoMirrorConcentrator tmc;
-        tmc.buildFinite(s, f1, L, f2, da, a_max);
-        system.addComponent(&tmc);
-
-        // target
-        Circle target(float_vec(0, 0), f2 / 10);
-        system.addComponent(&target);
+        tmc.buildFinite(Sa, SB, f1, L, f2, da, a_max);
+        
+        // design
+        Design design;
+        design.addGeometry(&source);
+        design.addGeometry(&target);
+        design.addGeometry(&tmc);
 
         // ray trace
         std::vector<Ray> rays;
-        for (int i = 0; i < 5; ++i) {
-            const float_vec surfaceSample = source.sampleSurface();
-            const float_vec rayDirection = normalize(surfaceSample - source.c);
-            const Ray r(surfaceSample - A_LITTLE_BIT * rayDirection, rayDirection);
-            rays.push_back(r);
+        for (int i = 0; i < 100; ++i) {
+            // rays.push_back(source.sampleMeanRay(a_max));
+            rays.push_back(source.sampleDiffuseRay(a_max));
         }
-        std::vector<Path> paths = system.rayTrace(rays);
+        std::vector<Path> paths = design.rayTrace(rays);
 
         // output
         std::ofstream file;
         file.open("data_2mc_fin_cyl_input.csv");
-        file << f1 << "," << L << "," << f2 << "," << da << "," << a_max << "\n";
+        file << radius << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max << "\n";
         file.close();
         file.open("data_2mc_fin_cyl_m1.csv");
         tmc.m1.writeToFile(file);
@@ -770,6 +778,55 @@ if (INFINITE_SYSTEM) {
         float_vec extrNegDir(-std::cos(EPSILON_OVER_TWO), -std::sin(EPSILON_OVER_TWO));
         infCyl2MC.traceRaysIncrementally(extrNegDir, infCyl2MC.M1.segments.back().second.y, h_inc, -infCyl2MC.M1.segments.back().second.y, "data_2mc_cyl_extr_neg.csv");
     }
+}
+
+*/
+
+/*
+
+// build infinite two-mirror concentrator
+TwoMirrorConcentrator buildInf2MC(const Shape& s, const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max,
+    const std::string& fileName) {
+
+    // build
+    TwoMirrorConcentrator inf2MC;
+    inf2MC.buildInfinite(s, inv, L, f, K_in, dB, B_max);
+
+    // write
+    std::ofstream file;
+    file.open(fileName);
+
+    // for (int i = 0, n = static_cast<int>(inf2MC.M1.segments.size()); i < n; ++i) {
+    //     file << inf2MC.M1.segments[i].first.x << "," << inf2MC.M1.segments[i].first.y << ",";
+    //     file << inf2MC.M2.segments[i].first.x << "," << inf2MC.M2.segments[i].first.y << "\n";
+    // }
+    // file << inf2MC.M1.segments.back().second.x << "," << inf2MC.M1.segments.back().second.y << ",";
+    // file << inf2MC.M2.segments.back().second.x << "," << inf2MC.M2.segments.back().second.y << "\n";
+
+    file.close();
+
+    // return
+    return inf2MC;
+}
+
+// build parabolic mirror
+ParabolicMirror buildPM(const float_type& f, const float_type& dy, const float_type& B_max,
+    const std::string& fileName) {
+
+    // build
+    ParabolicMirror PM;
+    PM.build(f, dy, B_max);
+
+    // write
+    std::ofstream file;
+    file.open(fileName);
+
+    // for (auto segment : PM.M.segments) file << segment.first.x << "," << segment.first.y << "\n";
+
+    file.close();
+
+    // return
+    return PM;
 }
 
 */
