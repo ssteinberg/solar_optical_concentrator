@@ -7,6 +7,8 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <memory>
+#include <ranges>
 #include <tuple>
 #include <vector>
 
@@ -30,10 +32,11 @@ constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
 
 // switches
 constexpr bool INFINITE_SYSTEM = false;
-constexpr bool FINITE_SYSTEM = true;
-constexpr bool FLAT_TARGET = false;
-constexpr bool CYLINDRICAL_TARGET = false;
-constexpr bool PARABOLIC_MIRROR = false;
+constexpr bool FINITE_SYSTEM = !INFINITE_SYSTEM;
+constexpr bool FLAT_SOURCE = true;
+constexpr bool CYLINDRICAL_SOURCE = !FLAT_SOURCE;
+constexpr bool FLAT_TARGET = true;
+constexpr bool CYLINDRICAL_TARGET = !FLAT_TARGET;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -68,6 +71,37 @@ struct Ray {
     Ray(const float_vec& o, const float_vec& d) : o(o), d(d) {}
 };
 
+// path
+struct Path {
+
+    std::vector<float_vec> vertices;
+
+    void addVertex(const float_vec& v) {
+        vertices.push_back(v);
+    }
+
+    void writePath(std::ofstream& file) {
+        const int pathLength = vertices.size() - 1;
+        if (pathLength > 0) {
+            for (int i = 0; i < pathLength; ++i) {
+                const float_vec v1 = vertices[i];
+                const float_vec v2 = vertices[i + 1];
+                file << v1.x << "," << v1.y << "," << v2.x << "," << v2.y << "\n";
+            }
+        }
+    }
+
+    void writeFinalSegment(std::ofstream& file) {
+        const int pathLength = vertices.size() - 1;
+        if (pathLength > 0) {
+            const float_vec v1 = vertices[pathLength - 1];
+            const float_vec v2 = vertices[pathLength];
+            file << v1.x << "," << v1.y << "," << v2.x << "," << v2.y << "\n";
+        }
+    }
+    
+};
+
 // shape
 enum struct Shape {
     FLAT,
@@ -78,7 +112,10 @@ enum struct Shape {
 enum struct Type {
     SOURCE,
     TARGET,
-    MIRROR
+    MIRROR,
+    MIRROR_1,
+    MIRROR_2,
+    BARRIER
 };
 
 // hit info
@@ -86,28 +123,6 @@ struct HitInfo {
     float_type l;
     float_vec p, n;
     Type t;
-};
-
-// path
-struct Path {
-
-    std::vector<float_vec> vertices;
-
-    void addVertex(const float_vec& v) {
-        vertices.push_back(v);
-    }
-
-    void writeToFile(std::ofstream& file) {
-        const int pathLength = vertices.size() - 1;
-        if (pathLength > 0) {
-            for (int i = 0; i < pathLength; ++i) {
-                const float_vec v1 = vertices[i];
-                const float_vec v2 = vertices[i + 1];
-                file << v1.x << "," << v1.y << "," << v2.x << "," << v2.y << "\n";
-            }
-        }
-    }
-    
 };
 
 
@@ -121,16 +136,18 @@ struct Path {
 // geometry
 struct Geometry {
     virtual bool intersect(const Ray& ray, HitInfo& hitInfo) = 0;
+    virtual Ray sampleMeanRay() = 0;
+    virtual Ray sampleDiffuseRay() = 0;
 };
 
 // line segment
 struct LineSegment : Geometry {
 
-    Shape shape;
+    Shape shape = Shape::FLAT;
     Type type;
     float_vec p1, p2, n1, n2;
 
-    LineSegment(const Type& t, const float_vec& p1, const float_vec& p2, const float_vec& n1, const float_vec& n2) : shape(Shape::FLAT), type(t), p1(p1), p2(p2), n1(n1), n2(n2) {}
+    LineSegment(const Type& t, const float_vec& p1, const float_vec& p2, const float_vec& n1, const float_vec& n2) : type(t), p1(p1), p2(p2), n1(n1), n2(n2) {}
 
     bool intersect(const Ray& ray, HitInfo& hitInfo) override {
         const float_vec segDir = p2 - p1;
@@ -148,21 +165,35 @@ struct LineSegment : Geometry {
         return false;
     }
 
-    Ray sampleMeanRay(const float_type& angle_max) {
+    Ray sampleMeanRay() override {
         const float_type s = PCG32::rand();
         const float_vec p = (1 - s) * p1 + s * p2;
         const float_vec n = (1 - s) * n1 + s * n2;
         return Ray(p + A_LITTLE_BIT * n, n);
     }
 
-    Ray sampleDiffuseRay(const float_type& angle_max) {
-        const Ray meanRay = sampleMeanRay(angle_max);
+    Ray sampleDiffuseRay() override {
+        const Ray meanRay = sampleMeanRay();
         const float_vec n = meanRay.d;
         const float_type theta = std::asin(2 * PCG32::rand() - 1);
         const float_type cos0 = std::cos(theta);
         const float_type sin0 = std::sin(theta);
         const float_vec rotDir(n.x * cos0 - n.y * sin0, n.x * sin0 + n.y * cos0);
         return Ray(meanRay.o, rotDir);
+    }
+
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() {
+        std::vector<Ray> p1ExtrRays, p2ExtrRays;
+        for (int degrees = -90; degrees <= 90; ++degrees) {
+            const float_type theta = degrees * DEG_TO_RAD;
+            const float_type cos0 = std::cos(theta);
+            const float_type sin0 = std::sin(theta);
+            const float_vec p1RotDir(n1.x * cos0 - n1.y * sin0, n1.x * sin0 + n1.y * cos0);
+            const float_vec p2RotDir(n2.x * cos0 - n2.y * sin0, n2.x * sin0 + n2.y * cos0);
+            p1ExtrRays.emplace_back(p1, p1RotDir);
+            p2ExtrRays.emplace_back(p2, p2RotDir);
+        }
+        return std::pair(p1ExtrRays, p2ExtrRays);
     }
 
     void writeToFile(std::ofstream& file) {
@@ -174,12 +205,12 @@ struct LineSegment : Geometry {
 // circle
 struct Circle : Geometry {
 
-    Shape shape;
+    Shape shape = Shape::CYLINDRICAL;
     Type type;
     float_vec c;
     float_type r;
 
-    Circle(const Type& t, const float_vec& c, const float_type& r) : shape(Shape::CYLINDRICAL), type(t), c(c), r(r) {}
+    Circle(const Type& t, const float_vec& c, const float_type& r) : type(t), c(c), r(r) {}
 
     bool intersect(const Ray& ray, HitInfo& hitInfo) override {
         const float_vec oc = c - ray.o;
@@ -205,21 +236,35 @@ struct Circle : Geometry {
         return true;
     }
 
-    Ray sampleMeanRay(const float_type& angle_max) {
-        const float_type theta = PCG32::rand() * 2 * angle_max + PI - angle_max;
+    Ray sampleMeanRay() override {
+        const float_type theta = PCG32::rand() * 2 * PI;
         const float_vec p = c + r * float_vec(std::cos(theta), std::sin(theta));
         const float_vec n = (p - c) / r;
         return Ray(p, n);
     }
 
-    Ray sampleDiffuseRay(const float_type& angle_max) {
-        const Ray meanRay = sampleMeanRay(angle_max);
+    Ray sampleDiffuseRay() override {
+        const Ray meanRay = sampleMeanRay();
         const float_vec n = meanRay.d;
         const float_type theta = std::asin(2 * PCG32::rand() - 1);
         const float_type cos0 = std::cos(theta);
         const float_type sin0 = std::sin(theta);
         const float_vec rotDir(n.x * cos0 - n.y * sin0, n.x * sin0 + n.y * cos0);
         return Ray(meanRay.o, rotDir);
+    }
+
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() {
+        std::vector<Ray> p1ExtrRays, p2ExtrRays;
+        for (int degrees = 0; degrees <= 360; degrees += 2) {
+            const float_type theta = degrees * DEG_TO_RAD;
+            const float_vec p = c + r * float_vec(std::cos(theta), std::sin(theta));
+            const float_vec n = (p - c) / r;
+            const float_vec p1RotDir(-n.y, n.x);
+            const float_vec p2RotDir(n.y, -n.x);
+            p1ExtrRays.emplace_back(p, p1RotDir);
+            p2ExtrRays.emplace_back(p, p2RotDir);
+        }
+        return std::pair(p1ExtrRays, p2ExtrRays);
     }
 
 };
@@ -240,6 +285,14 @@ struct Mirror : Geometry {
         return false;
     }
 
+    Ray sampleMeanRay() override {
+        return segments[PCG32::rand() * segments.size()].sampleMeanRay();
+    }
+
+    Ray sampleDiffuseRay() override {
+        return segments[PCG32::rand() * segments.size()].sampleDiffuseRay();
+    }
+
     void writeToFile(std::ofstream& file) {
         for (auto s : segments) {
             s.writeToFile(file);
@@ -251,32 +304,9 @@ struct Mirror : Geometry {
 // two-mirror concentrator
 struct TwoMirrorConcentrator : Geometry {
 
-    // fields
-    Mirror m1, m2;
+    Mirror m1, m2, barrier;
 
-    // implement component intersect
-    bool intersect(const Ray& ray, HitInfo& hitInfo) override {
-        if (m1.intersect(ray, hitInfo)) return true;
-        if (m2.intersect(ray, hitInfo)) return true;
-        return false;
-    }
-
-    // build infinite system
-    void buildInfinite(const Shape& s, const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max) {
-
-        // incoming intensity
-        const auto& I = [=](const float_type alpha) {
-            if (s == Shape::FLAT) return std::cos(alpha);
-            else if (s == Shape::CYLINDRICAL) return float_type(1);
-            else return float_type(0);
-        };
-
-        // outgoing intensity
-        const auto& S = [=](const float_type beta) {
-            if (s == Shape::FLAT) return std::cos(beta);
-            else if (s == Shape::CYLINDRICAL) return float_type(1);
-            else return float_type(0);
-        };
+    void buildInfinite(const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max) {
 
         // initial conditions
         float_vec p(-L, 0), pp(f, 0), n(1, 0), np(-1, 0);
@@ -295,8 +325,9 @@ struct TwoMirrorConcentrator : Geometry {
             const float_type d = R - 2 * (L + f);
 
             // (7)
-            const float_type I = 1; // depends on I = const.
-            const float_type dy = (inv ? -1 : 1) * S(B) / I * dB;
+            const float_type I = 1;
+            const float_type S = 1;
+            const float_type dy = (inv ? -1 : 1) * S / I * dB;
             const float_type dx = dy * (p.y - r * sinB) / (r * (cosB - 1) + 2 * (L + f));
             const float_vec p_new(p.x + dx, p.y + dy);
 
@@ -329,7 +360,6 @@ struct TwoMirrorConcentrator : Geometry {
         }
     }
 
-    // build finite system
     void buildFinite(const auto& Sa, const auto& SB, const float_type& f1, const float_type& L, const float_type& f2, const float_type& da, const float_type& a_max) {
 
         // initial conditions
@@ -386,32 +416,40 @@ struct TwoMirrorConcentrator : Geometry {
         }
     }
 
-};
-
-// parabolic mirror
-struct ParabolicMirror : Geometry {
-
-    Mirror M;
-
-    void build(const float_type& f, const float_type& dy, const float_type& B_max) {
-        float_vec p(-f, 0), n(1, 0);
-        float_type B(0);
-        while (B < B_max) {
-            const float_type y_new = p.y + dy;
-            const float_type x_new = y_new * y_new / (4 * f) - f;
-            const float_vec p_new(x_new, y_new);
-            const float_vec n_new = normalize(float_vec(2 * f, -p_new.y));
-            M.addSegment(p, p_new, n, n_new);
-            p = p_new;
-            n = n_new;
-            B = std::atan(p_new.y / p_new.x) * RAD_TO_DEG;
-        }
+    void buildBarrier() {
+        const float_type x_max = 2 * std::max(std::abs(m1.segments.front().p1.x), std::abs(m2.segments.front().p1.x));
+        const float_type y_max = 2 * std::max(std::abs(m1.segments.back().p2.y), std::abs(m2.segments.back().p2.y));
+        const float_vec bottomRight(x_max, -y_max), topRight(x_max, y_max), topLeft(-x_max, y_max), bottomLeft(-x_max, -y_max);
+        barrier.addSegment(bottomRight, topRight, float_vec(-1, 0), float_vec(-1, 0));
+        barrier.addSegment(topRight, topLeft, float_vec(0, -1), float_vec(0, -1));
+        barrier.addSegment(topRight, bottomRight, float_vec(1, 0), float_vec(1, 0));
+        barrier.addSegment(bottomLeft, bottomRight, float_vec(0, 1), float_vec(0, 1));
     }
 
-    void traceRay(std::vector<std::tuple<float_vec, float_vec, float_vec>>& rayPaths, const Ray& ray) {
-        if (HitInfo hitInfo; M.intersect(ray, hitInfo)) {
-            rayPaths.emplace_back(ray.o, hitInfo.p, hitInfo.p + normalize(ray.d - 2 * dot(hitInfo.n, ray.d) * hitInfo.n));
+    bool intersect(const Ray& ray, HitInfo& hitInfo) override {
+        if (m1.intersect(ray, hitInfo)) {
+            hitInfo.t = Type::MIRROR_1;
+            return true;
         }
+        if (m2.intersect(ray, hitInfo)) {
+            hitInfo.t = Type::MIRROR_2;
+            return true;
+        }
+        if (barrier.intersect(ray, hitInfo)) {
+            hitInfo.t = Type::BARRIER;
+            return true;
+        }
+        return false;
+    }
+
+    Ray sampleMeanRay() override {
+        if (PCG32::rand() < 0.5) return m1.sampleMeanRay();
+        else return m2.sampleMeanRay();
+    }
+
+    Ray sampleDiffuseRay() override {
+        if (PCG32::rand() < 0.5) return m1.sampleDiffuseRay();
+        else return m2.sampleDiffuseRay();
     }
 
 };
@@ -447,14 +485,17 @@ struct Design {
         int i = 0;
         while (i < 3) {
             if (HitInfo h; intersect(r, h)) {
+
+                if (i == 0 && h.t != Type::MIRROR_1) return Path();
+                if (i == 1 && h.t != Type::MIRROR_2) return Path();
+
                 path.addVertex(h.p);
-                if (h.t == Type::TARGET) return path;
                 float_vec reflectedDirection = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
                 r = Ray(h.p + A_LITTLE_BIT * reflectedDirection, reflectedDirection);
             }
             ++i;
         }
-        return Path();
+        return path;
     }
 
     std::vector<Path> rayTrace(const std::vector<Ray>& rays) {
@@ -482,24 +523,24 @@ int main(int argc, char* argv[]) {
     if (FINITE_SYSTEM) {
 
         // input
-        const float_type f1(10), L(12), f2(6), da(0.001), a_max(55 * DEG_TO_RAD);
-        const float_type radius(f1 / 10);
+        const float_type f1(1), L(4), f2(1), da(0.001), a_max(110 * DEG_TO_RAD);
+        const float_type radius(f1 / 100);
 
         // source
-        // LineSegment source(Type::SOURCE, float_vec(-L, -radius), float_vec(-L, radius), float_vec(-1, 0), float_vec(-1, 0));
-        Circle source(Type::SOURCE, float_vec(-L, 0), radius);
+        LineSegment flatSource(Type::SOURCE, float_vec(-L, -radius), float_vec(-L, radius), float_vec(-1, 0), float_vec(-1, 0));
+        Circle cylindricalSource(Type::SOURCE, float_vec(-L, 0), radius);
         const auto& Sa = [=](const float_type& alpha) {
-            if (source.shape == Shape::FLAT) return std::cos(alpha);
-            else if (source.shape == Shape::CYLINDRICAL) return float_type(1);
+            if (FLAT_SOURCE) return std::cos(alpha);
+            else if (CYLINDRICAL_SOURCE) return float_type(1);
             else return float_type(0);
         };
-        
+
         // target
-        LineSegment target(Type::TARGET, float_vec(0, -radius), float_vec(0, radius), float_vec(1, 0), float_vec(1, 0));
-        // Circle target(Type::TARGET, float_vec(0, 0), radius);
+        LineSegment flatTarget(Type::TARGET, float_vec(0, -radius), float_vec(0, radius), float_vec(1, 0), float_vec(1, 0));
+        Circle cylindricalTarget(Type::TARGET, float_vec(0, 0), radius);
         const auto& SB = [=](const float_type& beta) {
-            if (target.shape == Shape::FLAT) return std::cos(beta);
-            else if (target.shape == Shape::CYLINDRICAL) return float_type(1);
+            if (FLAT_TARGET) return std::cos(beta);
+            else if (CYLINDRICAL_TARGET) return float_type(1);
             else return float_type(0);
         };
 
@@ -509,22 +550,32 @@ int main(int argc, char* argv[]) {
         
         // design
         Design design;
-        design.addGeometry(&source);
-        design.addGeometry(&target);
+        // if (FLAT_SOURCE) design.addGeometry(&flatSource);
+        // else if (CYLINDRICAL_SOURCE) design.addGeometry(&cylindricalSource);
+        // if (FLAT_TARGET) design.addGeometry(&flatTarget);
+        // else if (CYLINDRICAL_TARGET) design.addGeometry(&cylindricalTarget);
         design.addGeometry(&tmc);
 
         // ray trace
         std::vector<Ray> rays;
-        for (int i = 0; i < 100; ++i) {
-            // rays.push_back(source.sampleMeanRay(a_max));
-            rays.push_back(source.sampleDiffuseRay(a_max));
+        if (FLAT_SOURCE) {
+            for (int i = 0; i < 100; ++i) {
+                rays.push_back(flatSource.sampleMeanRay());
+                // rays.push_back(flatSource.sampleDiffuseRay());
+            }
+        }
+        if (CYLINDRICAL_SOURCE) {
+            for (int i = 0; i < 100; ++i) {
+                rays.push_back(cylindricalSource.sampleMeanRay());
+                // rays.push_back(cylindricalSource.sampleDiffuseRay());
+            }
         }
         std::vector<Path> paths = design.rayTrace(rays);
 
         // output
         std::ofstream file;
         file.open("data_2mc_fin_cyl_input.csv");
-        file << radius << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max << "\n";
+        file << FLAT_SOURCE << "," << FLAT_TARGET << "," << radius << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max << "\n";
         file.close();
         file.open("data_2mc_fin_cyl_m1.csv");
         tmc.m1.writeToFile(file);
@@ -534,9 +585,37 @@ int main(int argc, char* argv[]) {
         file.close();
         file.open("data_2mc_fin_cyl_paths.csv");
         for (auto path : paths) {
-            path.writeToFile(file);
+            path.writePath(file);
         }
         file.close();
+
+
+
+        // extreme rays
+        tmc.buildBarrier();
+        if (FLAT_SOURCE) {
+            auto extrRays = flatSource.generateExtremeRays();
+            auto p1Paths = design.rayTrace(extrRays.first);
+            auto p2Paths = design.rayTrace(extrRays.second);
+            file.open("data_2mc_fin_extr_1.csv");
+            for (auto path : p1Paths) path.writeFinalSegment(file);
+            file.close();
+            file.open("data_2mc_fin_extr_2.csv");
+            for (auto path : p2Paths) path.writeFinalSegment(file);
+            file.close();
+        }
+        if (CYLINDRICAL_SOURCE) {
+            auto extrRays = cylindricalSource.generateExtremeRays();
+            auto p1Paths = design.rayTrace(extrRays.first);
+            auto p2Paths = design.rayTrace(extrRays.second);
+            file.open("data_2mc_fin_extr_1.csv");
+            for (auto path : p1Paths) path.writeFinalSegment(file);
+            file.close();
+            file.open("data_2mc_fin_extr_2.csv");
+            for (auto path : p2Paths) path.writeFinalSegment(file);
+            file.close();
+        }
+
     }
 
 }
@@ -828,5 +907,37 @@ ParabolicMirror buildPM(const float_type& f, const float_type& dy, const float_t
     // return
     return PM;
 }
+
+*/
+
+/*
+
+// parabolic mirror
+struct ParabolicMirror : Geometry {
+
+    Mirror M;
+
+    void build(const float_type& f, const float_type& dy, const float_type& B_max) {
+        float_vec p(-f, 0), n(1, 0);
+        float_type B(0);
+        while (B < B_max) {
+            const float_type y_new = p.y + dy;
+            const float_type x_new = y_new * y_new / (4 * f) - f;
+            const float_vec p_new(x_new, y_new);
+            const float_vec n_new = normalize(float_vec(2 * f, -p_new.y));
+            M.addSegment(p, p_new, n, n_new);
+            p = p_new;
+            n = n_new;
+            B = std::atan(p_new.y / p_new.x) * RAD_TO_DEG;
+        }
+    }
+
+    void traceRay(std::vector<std::tuple<float_vec, float_vec, float_vec>>& rayPaths, const Ray& ray) {
+        if (HitInfo hitInfo; M.intersect(ray, hitInfo)) {
+            rayPaths.emplace_back(ray.o, hitInfo.p, hitInfo.p + normalize(ray.d - 2 * dot(hitInfo.n, ray.d) * hitInfo.n));
+        }
+    }
+
+};
 
 */
