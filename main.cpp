@@ -33,7 +33,7 @@ constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
 // switches
 constexpr bool INFINITE_SYSTEM = false;
 constexpr bool FINITE_SYSTEM = !INFINITE_SYSTEM;
-constexpr bool FLAT_SOURCE = false;
+constexpr bool FLAT_SOURCE = true;
 constexpr bool CYLINDRICAL_SOURCE = !FLAT_SOURCE;
 constexpr bool FLAT_TARGET = true;
 constexpr bool CYLINDRICAL_TARGET = !FLAT_TARGET;
@@ -105,7 +105,8 @@ struct Path {
 // shape
 enum struct Shape {
     FLAT,
-    CYLINDRICAL
+    CYLINDRICAL,
+    CONSTRUCTED
 };
 
 // type
@@ -137,6 +138,9 @@ struct HitInfo {
 
 // geometry
 struct Geometry {
+    Shape shape;
+    Type type;
+    Geometry(const Shape& s, const Type& t) : shape(s), type(t) {}
     virtual bool intersect(const Ray& ray, HitInfo& hitInfo) = 0;
     virtual Ray sampleMeanRay() = 0;
     virtual Ray sampleDiffuseRay() = 0;
@@ -145,11 +149,9 @@ struct Geometry {
 // line segment
 struct LineSegment : Geometry {
 
-    Shape shape = Shape::FLAT;
-    Type type;
     float_vec p1, p2, n1, n2;
 
-    LineSegment(const Type& t, const float_vec& p1, const float_vec& p2, const float_vec& n1, const float_vec& n2) : type(t), p1(p1), p2(p2), n1(n1), n2(n2) {}
+    LineSegment(const Type& t, const float_vec& p1, const float_vec& p2, const float_vec& n1, const float_vec& n2) : Geometry(Shape::FLAT, t), p1(p1), p2(p2), n1(n1), n2(n2) {}
 
     bool intersect(const Ray& ray, HitInfo& hitInfo) override {
         const float_vec segDir = p2 - p1;
@@ -207,12 +209,10 @@ struct LineSegment : Geometry {
 // circle
 struct Circle : Geometry {
 
-    Shape shape = Shape::CYLINDRICAL;
-    Type type;
     float_vec c;
     float_type r;
 
-    Circle(const Type& t, const float_vec& c, const float_type& r) : type(t), c(c), r(r) {}
+    Circle(const Type& t, const float_vec& c, const float_type& r) : Geometry(Shape::CYLINDRICAL, t), c(c), r(r) {}
 
     bool intersect(const Ray& ray, HitInfo& hitInfo) override {
         const float_vec oc = c - ray.o;
@@ -276,6 +276,8 @@ struct Mirror : Geometry {
 
     std::vector<LineSegment> segments;
 
+    Mirror() : Geometry(Shape::CONSTRUCTED, Type::MIRROR) {}
+
     void addSegment(const float_vec& p1, const float_vec& p2, const float_vec& n1, const float_vec& n2) {
         segments.emplace_back(Type::MIRROR, p1, p2, n1, n2);
     }
@@ -307,6 +309,8 @@ struct Mirror : Geometry {
 struct TwoMirrorConcentrator : Geometry {
 
     Mirror m1a, m1b, m2a, m2b, barrier;
+
+    TwoMirrorConcentrator() : Geometry(Shape::CONSTRUCTED, Type::MIRROR) {}
 
     void buildInfinite(const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max) {
 
@@ -473,10 +477,14 @@ struct TwoMirrorConcentrator : Geometry {
 // system
 struct Design {
 
+    Geometry* source;
+    Geometry* target;
     std::vector<Geometry*> geometries;
 
-    void addGeometry(Geometry* const geometry) {
-        geometries.push_back(geometry);
+    void addGeometry(Geometry* const g) {
+        geometries.push_back(g);
+        if (g->type == Type::SOURCE) source = g;
+        else if (g->type == Type::TARGET) target = g;
     }
 
     bool intersect(const Ray& ray, HitInfo& minHitInfo) {
@@ -498,25 +506,15 @@ struct Design {
         Path path;
         path.addVertex(ray.o);
         Ray r = ray;
-
-        // Type prevType = Type::SOURCE;
-
-        int i = 0;
-        while (i < 3) {
+        for (int i = 0; i < 3; ++i) {
             if (HitInfo h; intersect(r, h)) {
-
                 if (i == 0 && h.t != Type::MIRROR_1a && h.t != Type::MIRROR_1b) return Path();
                 if (i == 1 && h.t != Type::MIRROR_2a && h.t != Type::MIRROR_2b) return Path();
-                // if (i == 1 && prevType == Type::MIRROR_1a && h.t != Type::MIRROR_2a) return Path();
-                // if (i == 1 && prevType == Type::MIRROR_1b && h.t != Type::MIRROR_2b) return Path();
-                // prevType = h.t;
-
                 path.addVertex(h.p);
-                float_vec reflectedDirection = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
-                r = Ray(h.p + A_LITTLE_BIT * reflectedDirection, reflectedDirection);
+                float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
+                r = Ray(h.p + A_LITTLE_BIT * refl, refl);
             }
             else break;
-            ++i;
         }
         return path;
     }
@@ -527,6 +525,34 @@ struct Design {
             paths.push_back(traceRay(ray));
         }
         return paths;
+    }
+
+    void generatePhaseSpace(const int& numRays) {
+        std::ofstream file;
+        file.open("data_phase_space.csv");
+        for (int i = 0; i < numRays; ++i) {
+            Ray r = source->sampleDiffuseRay();
+            for (int j = 0; j < 3; ++j) {
+                if (HitInfo h; intersect(r, h)) {
+                    if (j == 0 && h.t != Type::MIRROR_1a && h.t != Type::MIRROR_1b) break;
+                    if (j == 1 && h.t != Type::MIRROR_2a && h.t != Type::MIRROR_2b) break;
+                    if (j == 2 && h.t != Type::TARGET) break;
+                    if (j == 2 && h.t == Type::TARGET) {
+                        if (target->shape == Shape::FLAT) {
+                            file << cross(-r.d, h.n) << "," << h.p.y << "\n";
+                        }
+                        else if (target->shape == Shape::CYLINDRICAL) {
+
+                        }
+                        break;
+                    }
+                    float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
+                    r = Ray(h.p + A_LITTLE_BIT * refl, refl);
+                }
+                else break;
+            }
+        }
+        file.close();
     }
 
 };
@@ -546,7 +572,7 @@ int main(int argc, char* argv[]) {
     if (FINITE_SYSTEM) {
 
         // input
-        const float_type f1(10), L(12), f2(6), da(0.000001), a_max(55 * DEG_TO_RAD);
+        const float_type f1(1), L(4), f2(1), da(0.00001), a_max(110 * DEG_TO_RAD);
         const float_type radius(f1 / 1000);
 
         // source
@@ -573,32 +599,12 @@ int main(int argc, char* argv[]) {
         
         // design
         Design design;
-        // if (FLAT_SOURCE) design.addGeometry(&flatSource);
-        // else if (CYLINDRICAL_SOURCE) design.addGeometry(&cylindricalSource);
-        // if (FLAT_TARGET) design.addGeometry(&flatTarget);
-        // else if (CYLINDRICAL_TARGET) design.addGeometry(&cylindricalTarget);
         design.addGeometry(&tmc);
-
-        // ray trace
-        std::vector<Ray> rays;
-        if (FLAT_SOURCE) {
-            for (int i = 0; i < 100; ++i) {
-                rays.push_back(flatSource.sampleMeanRay());
-                // rays.push_back(flatSource.sampleDiffuseRay());
-            }
-        }
-        if (CYLINDRICAL_SOURCE) {
-            for (int i = 0; i < 100; ++i) {
-                rays.push_back(cylindricalSource.sampleMeanRay());
-                // rays.push_back(cylindricalSource.sampleDiffuseRay());
-            }
-        }
-        std::vector<Path> paths = design.rayTrace(rays);
 
         // output
         std::ofstream file;
         file.open("data_2mc_fin_input.csv");
-        file << FLAT_SOURCE << "," << FLAT_TARGET << "," << radius << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max << "\n";
+        file << FLAT_SOURCE << "," << FLAT_TARGET << "," << radius << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "\n";
         file.close();
 
         // mirror 1
@@ -617,12 +623,7 @@ int main(int argc, char* argv[]) {
         tmc.m2b.writeToFile(file);
         file.close();
 
-        // sampled rays
-        file.open("data_2mc_fin_paths.csv");
-        for (auto path : paths) {
-            path.writePath(file);
-        }
-        file.close();
+        
 
         // extreme rays
         tmc.buildBarrier();
@@ -652,6 +653,16 @@ int main(int argc, char* argv[]) {
             for (auto path : p2Paths) path.writeFinalSegment(file);
             file.close();
         }
+        
+
+
+        // phase space
+        if (FLAT_SOURCE) design.addGeometry(&flatSource);
+        else if (CYLINDRICAL_SOURCE) design.addGeometry(&cylindricalSource);
+        if (FLAT_TARGET) design.addGeometry(&flatTarget);
+        else if (CYLINDRICAL_TARGET) design.addGeometry(&cylindricalTarget);
+        design.generatePhaseSpace(10000);
+
     }
 
 }
@@ -975,5 +986,32 @@ struct ParabolicMirror : Geometry {
     }
 
 };
+
+*/
+
+/*
+
+// ray trace
+std::vector<Ray> rays;
+if (FLAT_SOURCE) {
+    for (int i = 0; i < 100; ++i) {
+        // rays.push_back(flatSource.sampleMeanRay());
+        rays.push_back(flatSource.sampleDiffuseRay());
+    }
+}
+if (CYLINDRICAL_SOURCE) {
+    for (int i = 0; i < 100; ++i) {
+        // rays.push_back(cylindricalSource.sampleMeanRay());
+        rays.push_back(cylindricalSource.sampleDiffuseRay());
+    }
+}
+std::vector<Path> paths = design.rayTrace(rays);
+
+// sampled rays
+file.open("data_2mc_fin_paths.csv");
+for (auto path : paths) {
+    path.writePath(file);
+}
+file.close();
 
 */
