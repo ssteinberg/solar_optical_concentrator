@@ -33,7 +33,7 @@ constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
 // switches
 constexpr bool INFINITE_SYSTEM = false;
 constexpr bool FINITE_SYSTEM = !INFINITE_SYSTEM;
-constexpr bool FLAT_SOURCE = true;
+constexpr bool FLAT_SOURCE = false;
 constexpr bool CYLINDRICAL_SOURCE = !FLAT_SOURCE;
 constexpr bool FLAT_TARGET = true;
 constexpr bool CYLINDRICAL_TARGET = !FLAT_TARGET;
@@ -113,8 +113,10 @@ enum struct Type {
     SOURCE,
     TARGET,
     MIRROR,
-    MIRROR_1,
-    MIRROR_2,
+    MIRROR_1a,
+    MIRROR_1b,
+    MIRROR_2a,
+    MIRROR_2b,
     BARRIER
 };
 
@@ -304,7 +306,7 @@ struct Mirror : Geometry {
 // two-mirror concentrator
 struct TwoMirrorConcentrator : Geometry {
 
-    Mirror m1, m2, barrier;
+    Mirror m1a, m1b, m2a, m2b, barrier;
 
     void buildInfinite(const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max) {
 
@@ -346,8 +348,8 @@ struct TwoMirrorConcentrator : Geometry {
             const float_vec np_new = normalize(K_out - K_int);
 
             // store coordinates and normals
-            m1.addSegment(p, p_new, n, n_new);
-            m2.addSegment(pp, pp_new, np, np_new);
+            m1a.addSegment(p, p_new, n, n_new);
+            m2a.addSegment(pp, pp_new, np, np_new);
 
             // update
             p = p_new;
@@ -399,10 +401,10 @@ struct TwoMirrorConcentrator : Geometry {
             const float_vec n2_new(normalize(v2 - u));
 
             // store coordinates and normals
-            m1.addSegment(p1, p1_new, n1, n1_new);
-            m2.addSegment(p2, p2_new, n2, n2_new);
-            m1.addSegment(float_vec(p1.x, -p1.y), float_vec(p1_new.x, -p1_new.y), float_vec(n1.x, -n1.y), float_vec(n1_new.x, -n1_new.y));
-            m2.addSegment(float_vec(p2.x, -p2.y), float_vec(p2_new.x, -p2_new.y), float_vec(n2.x, -n2.y), float_vec(n2_new.x, -n2_new.y));
+            m1a.addSegment(p1, p1_new, n1, n1_new);
+            m1b.addSegment(float_vec(p1.x, -p1.y), float_vec(p1_new.x, -p1_new.y), float_vec(n1.x, -n1.y), float_vec(n1_new.x, -n1_new.y));
+            m2a.addSegment(p2, p2_new, n2, n2_new);
+            m2b.addSegment(float_vec(p2.x, -p2.y), float_vec(p2_new.x, -p2_new.y), float_vec(n2.x, -n2.y), float_vec(n2_new.x, -n2_new.y));
 
             // update
             a = a_new;
@@ -417,8 +419,8 @@ struct TwoMirrorConcentrator : Geometry {
     }
 
     void buildBarrier() {
-        const float_type x_max = 2 * std::max(std::abs(m1.segments.front().p1.x), std::abs(m2.segments.front().p1.x));
-        const float_type y_max = 2 * std::max(std::abs(m1.segments.back().p2.y), std::abs(m2.segments.back().p2.y));
+        const float_type x_max = 2 * std::max(std::abs(m1a.segments.front().p1.x), std::abs(m2a.segments.front().p1.x));
+        const float_type y_max = 2 * std::max(std::abs(m1a.segments.back().p2.y), std::abs(m2a.segments.back().p2.y));
         const float_vec bottomRight(x_max, -y_max), topRight(x_max, y_max), topLeft(-x_max, y_max), bottomLeft(-x_max, -y_max);
         barrier.addSegment(bottomRight, topRight, float_vec(-1, 0), float_vec(-1, 0));
         barrier.addSegment(topRight, topLeft, float_vec(0, -1), float_vec(0, -1));
@@ -427,12 +429,20 @@ struct TwoMirrorConcentrator : Geometry {
     }
 
     bool intersect(const Ray& ray, HitInfo& hitInfo) override {
-        if (m1.intersect(ray, hitInfo)) {
-            hitInfo.t = Type::MIRROR_1;
+        if (m1a.intersect(ray, hitInfo)) {
+            hitInfo.t = Type::MIRROR_1a;
             return true;
         }
-        if (m2.intersect(ray, hitInfo)) {
-            hitInfo.t = Type::MIRROR_2;
+        if (m1b.intersect(ray, hitInfo)) {
+            hitInfo.t = Type::MIRROR_1b;
+            return true;
+        }
+        if (m2a.intersect(ray, hitInfo)) {
+            hitInfo.t = Type::MIRROR_2a;
+            return true;
+        }
+        if (m2b.intersect(ray, hitInfo)) {
+            hitInfo.t = Type::MIRROR_2b;
             return true;
         }
         if (barrier.intersect(ray, hitInfo)) {
@@ -443,13 +453,19 @@ struct TwoMirrorConcentrator : Geometry {
     }
 
     Ray sampleMeanRay() override {
-        if (PCG32::rand() < 0.5) return m1.sampleMeanRay();
-        else return m2.sampleMeanRay();
+        const float_type Randy = PCG32::rand();
+        if (Randy < 0.25) return m1a.sampleMeanRay();
+        if (0.25 <= Randy && Randy < 0.5) return m1b.sampleMeanRay();
+        if (0.5 <= Randy && Randy < 0.75) return m2a.sampleMeanRay();
+        return m2b.sampleMeanRay();
     }
 
     Ray sampleDiffuseRay() override {
-        if (PCG32::rand() < 0.5) return m1.sampleDiffuseRay();
-        else return m2.sampleDiffuseRay();
+        const float_type Randolf = PCG32::rand();
+        if (Randolf < 0.25) return m1a.sampleDiffuseRay();
+        if (0.25 <= Randolf && Randolf < 0.5) return m1b.sampleDiffuseRay();
+        if (0.5 <= Randolf && Randolf < 0.75) return m2a.sampleDiffuseRay();
+        return m2b.sampleDiffuseRay();
     }
 
 };
@@ -482,17 +498,24 @@ struct Design {
         Path path;
         path.addVertex(ray.o);
         Ray r = ray;
+
+        // Type prevType = Type::SOURCE;
+
         int i = 0;
         while (i < 3) {
             if (HitInfo h; intersect(r, h)) {
 
-                if (i == 0 && h.t != Type::MIRROR_1) return Path();
-                if (i == 1 && h.t != Type::MIRROR_2) return Path();
+                if (i == 0 && h.t != Type::MIRROR_1a && h.t != Type::MIRROR_1b) return Path();
+                if (i == 1 && h.t != Type::MIRROR_2a && h.t != Type::MIRROR_2b) return Path();
+                // if (i == 1 && prevType == Type::MIRROR_1a && h.t != Type::MIRROR_2a) return Path();
+                // if (i == 1 && prevType == Type::MIRROR_1b && h.t != Type::MIRROR_2b) return Path();
+                // prevType = h.t;
 
                 path.addVertex(h.p);
                 float_vec reflectedDirection = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
                 r = Ray(h.p + A_LITTLE_BIT * reflectedDirection, reflectedDirection);
             }
+            else break;
             ++i;
         }
         return path;
@@ -523,8 +546,8 @@ int main(int argc, char* argv[]) {
     if (FINITE_SYSTEM) {
 
         // input
-        const float_type f1(1), L(4), f2(1), da(0.001), a_max(110 * DEG_TO_RAD);
-        const float_type radius(f1 / 100);
+        const float_type f1(10), L(12), f2(6), da(0.000001), a_max(55 * DEG_TO_RAD);
+        const float_type radius(f1 / 1000);
 
         // source
         LineSegment flatSource(Type::SOURCE, float_vec(-L, -radius), float_vec(-L, radius), float_vec(-1, 0), float_vec(-1, 0));
@@ -574,22 +597,32 @@ int main(int argc, char* argv[]) {
 
         // output
         std::ofstream file;
-        file.open("data_2mc_fin_cyl_input.csv");
+        file.open("data_2mc_fin_input.csv");
         file << FLAT_SOURCE << "," << FLAT_TARGET << "," << radius << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max << "\n";
         file.close();
-        file.open("data_2mc_fin_cyl_m1.csv");
-        tmc.m1.writeToFile(file);
+
+        // mirror 1
+        file.open("data_2mc_fin_m1a.csv");
+        tmc.m1a.writeToFile(file);
         file.close();
-        file.open("data_2mc_fin_cyl_m2.csv");
-        tmc.m2.writeToFile(file);
+        file.open("data_2mc_fin_m1b.csv");
+        tmc.m1b.writeToFile(file);
         file.close();
-        file.open("data_2mc_fin_cyl_paths.csv");
+
+        // mirror 2
+        file.open("data_2mc_fin_m2a.csv");
+        tmc.m2a.writeToFile(file);
+        file.close();
+        file.open("data_2mc_fin_m2b.csv");
+        tmc.m2b.writeToFile(file);
+        file.close();
+
+        // sampled rays
+        file.open("data_2mc_fin_paths.csv");
         for (auto path : paths) {
             path.writePath(file);
         }
         file.close();
-
-
 
         // extreme rays
         tmc.buildBarrier();
@@ -598,9 +631,11 @@ int main(int argc, char* argv[]) {
             auto p1Paths = design.rayTrace(extrRays.first);
             auto p2Paths = design.rayTrace(extrRays.second);
             file.open("data_2mc_fin_extr_1.csv");
+            // for (auto path : p1Paths) path.writePath(file);
             for (auto path : p1Paths) path.writeFinalSegment(file);
             file.close();
             file.open("data_2mc_fin_extr_2.csv");
+            // for (auto path : p2Paths) path.writePath(file);
             for (auto path : p2Paths) path.writeFinalSegment(file);
             file.close();
         }
@@ -609,13 +644,14 @@ int main(int argc, char* argv[]) {
             auto p1Paths = design.rayTrace(extrRays.first);
             auto p2Paths = design.rayTrace(extrRays.second);
             file.open("data_2mc_fin_extr_1.csv");
+            // for (auto path : p1Paths) path.writePath(file);
             for (auto path : p1Paths) path.writeFinalSegment(file);
             file.close();
             file.open("data_2mc_fin_extr_2.csv");
+            // for (auto path : p2Paths) path.writePath(file);
             for (auto path : p2Paths) path.writeFinalSegment(file);
             file.close();
         }
-
     }
 
 }
