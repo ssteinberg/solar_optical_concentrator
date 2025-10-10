@@ -4,6 +4,7 @@
 
 // standard library
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -15,6 +16,9 @@
 // linear algebra
 #include "linalg.h"
 using namespace linalg::aliases;
+
+// parallelization
+#include <omp.h>
 
 // floating-point precision
 using float_type = double;
@@ -42,7 +46,7 @@ constexpr bool CYLINDRICAL_TARGET = !FLAT_TARGET;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// uniform rv c code
+// uniform random variable
 #include <stdint.h>
 namespace PCG32 {
 	static uint64_t mcg_state = 0xcafef00dd15ea5e5u; // must be odd
@@ -200,7 +204,7 @@ struct LineSegment : Geometry {
         return std::pair(p1ExtrRays, p2ExtrRays);
     }
 
-    void writeToFile(std::ofstream& file) {
+    void writeLineSegment(std::ofstream& file) {
         file << p1.x << "," << p1.y << "," << p2.x << "," << p2.y << "\n";
     }
 
@@ -297,9 +301,9 @@ struct Mirror : Geometry {
         return segments[PCG32::rand() * segments.size()].sampleDiffuseRay();
     }
 
-    void writeToFile(std::ofstream& file) {
+    void writeMirror(std::ofstream& file) {
         for (auto s : segments) {
-            s.writeToFile(file);
+            s.writeLineSegment(file);
         }
     }
 
@@ -472,6 +476,21 @@ struct TwoMirrorConcentrator : Geometry {
         return m2b.sampleDiffuseRay();
     }
 
+    void writeTwoMirrorConcentrator(const std::string& filePath, std::ofstream& file) {
+        file.open(filePath + "mirror1a.csv");
+        m1a.writeMirror(file);
+        file.close();
+        file.open(filePath + "mirror1b.csv");
+        m1b.writeMirror(file);
+        file.close();
+        file.open(filePath + "mirror2a.csv");
+        m2a.writeMirror(file);
+        file.close();
+        file.open(filePath + "mirror2b.csv");
+        m2b.writeMirror(file);
+        file.close();
+    }
+
 };
 
 // system
@@ -527,10 +546,11 @@ struct Design {
         return paths;
     }
 
-    void generatePhaseSpace(const int& numRays) {
-        std::ofstream file;
-        file.open("data_phase_space.csv");
+    std::vector<std::vector<float_type>> generatePhaseSpace(const int& numRays) {
+        std::vector<std::vector<std::vector<float_type>>> private_vectors(omp_get_max_threads());
+        #pragma omp parallel for schedule(dynamic, 1)
         for (int i = 0; i < numRays; ++i) {
+            int thread_id = omp_get_thread_num();
             Ray r = source->sampleDiffuseRay();
             for (int j = 0; j < 3; ++j) {
                 if (HitInfo h; intersect(r, h)) {
@@ -539,10 +559,14 @@ struct Design {
                     if (j == 2 && h.t != Type::TARGET) break;
                     if (j == 2 && h.t == Type::TARGET) {
                         if (target->shape == Shape::FLAT) {
-                            file << cross(-r.d, h.n) << "," << h.p.y << "\n";
+                            std::vector<float_type> temp = {cross(-r.d, h.n), h.p.y, std::abs(r.o.y)};
+                            private_vectors[thread_id].emplace_back(std::move(temp));
                         }
                         else if (target->shape == Shape::CYLINDRICAL) {
-
+                            float_type theta = std::atan2(h.p.y, h.p.x);
+                            if (theta < 0) theta += 2 * PI;
+                            std::vector<float_type> temp = {cross(-r.d, h.n), theta * RAD_TO_DEG, std::abs(r.o.y)};
+                            private_vectors[thread_id].emplace_back(std::move(temp));
                         }
                         break;
                     }
@@ -552,7 +576,11 @@ struct Design {
                 else break;
             }
         }
-        file.close();
+        std::vector<std::vector<float_type>> result;
+        for (const auto& v : private_vectors) {
+            result.insert(result.end(), v.begin(), v.end());
+        }
+        return result;
     }
 
 };
@@ -571,9 +599,17 @@ int main(int argc, char* argv[]) {
     // finite system
     if (FINITE_SYSTEM) {
 
+        // output
+        std::string outputDataPath = "data_finite/";
+        if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
+        std::ofstream file;
+
         // input
-        const float_type f1(1), L(4), f2(1), da(0.00001), a_max(110 * DEG_TO_RAD);
-        const float_type radius(f1 / 1000);
+        const float_type f1(1), L(4), f2(1), da(0.0001), a_max(90 * DEG_TO_RAD);
+        const float_type radius(f1 / 10);
+        file.open(outputDataPath + "input.csv");
+        file << FLAT_SOURCE << "," << FLAT_TARGET << "," << radius << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "\n";
+        file.close();
 
         // source
         LineSegment flatSource(Type::SOURCE, float_vec(-L, -radius), float_vec(-L, radius), float_vec(-1, 0), float_vec(-1, 0));
@@ -596,34 +632,15 @@ int main(int argc, char* argv[]) {
         // two-mirror concentrator
         TwoMirrorConcentrator tmc;
         tmc.buildFinite(Sa, SB, f1, L, f2, da, a_max);
+        tmc.writeTwoMirrorConcentrator(outputDataPath, file);
         
+
+
         // design
         Design design;
         design.addGeometry(&tmc);
 
-        // output
-        std::ofstream file;
-        file.open("data_2mc_fin_input.csv");
-        file << FLAT_SOURCE << "," << FLAT_TARGET << "," << radius << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "\n";
-        file.close();
 
-        // mirror 1
-        file.open("data_2mc_fin_m1a.csv");
-        tmc.m1a.writeToFile(file);
-        file.close();
-        file.open("data_2mc_fin_m1b.csv");
-        tmc.m1b.writeToFile(file);
-        file.close();
-
-        // mirror 2
-        file.open("data_2mc_fin_m2a.csv");
-        tmc.m2a.writeToFile(file);
-        file.close();
-        file.open("data_2mc_fin_m2b.csv");
-        tmc.m2b.writeToFile(file);
-        file.close();
-
-        
 
         // extreme rays
         tmc.buildBarrier();
@@ -631,12 +648,10 @@ int main(int argc, char* argv[]) {
             auto extrRays = flatSource.generateExtremeRays();
             auto p1Paths = design.rayTrace(extrRays.first);
             auto p2Paths = design.rayTrace(extrRays.second);
-            file.open("data_2mc_fin_extr_1.csv");
-            // for (auto path : p1Paths) path.writePath(file);
+            file.open(outputDataPath + "extreme1.csv");
             for (auto path : p1Paths) path.writeFinalSegment(file);
             file.close();
-            file.open("data_2mc_fin_extr_2.csv");
-            // for (auto path : p2Paths) path.writePath(file);
+            file.open(outputDataPath + "extreme2.csv");
             for (auto path : p2Paths) path.writeFinalSegment(file);
             file.close();
         }
@@ -644,12 +659,10 @@ int main(int argc, char* argv[]) {
             auto extrRays = cylindricalSource.generateExtremeRays();
             auto p1Paths = design.rayTrace(extrRays.first);
             auto p2Paths = design.rayTrace(extrRays.second);
-            file.open("data_2mc_fin_extr_1.csv");
-            // for (auto path : p1Paths) path.writePath(file);
+            file.open(outputDataPath + "extreme1.csv");
             for (auto path : p1Paths) path.writeFinalSegment(file);
             file.close();
-            file.open("data_2mc_fin_extr_2.csv");
-            // for (auto path : p2Paths) path.writePath(file);
+            file.open(outputDataPath + "extreme2.csv");
             for (auto path : p2Paths) path.writeFinalSegment(file);
             file.close();
         }
@@ -661,7 +674,10 @@ int main(int argc, char* argv[]) {
         else if (CYLINDRICAL_SOURCE) design.addGeometry(&cylindricalSource);
         if (FLAT_TARGET) design.addGeometry(&flatTarget);
         else if (CYLINDRICAL_TARGET) design.addGeometry(&cylindricalTarget);
-        design.generatePhaseSpace(10000);
+        auto phaseSpaceData = design.generatePhaseSpace(10000);
+        file.open(outputDataPath + "phase.csv");
+        for (auto data : phaseSpaceData) file << data[0] << "," << data[1] << "," << data[2] << "\n";
+        file.close();
 
     }
 
