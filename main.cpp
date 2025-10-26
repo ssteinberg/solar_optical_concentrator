@@ -36,8 +36,9 @@ constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
 
 // switches
 constexpr bool FINITE_SYSTEM = true;
-constexpr bool FLAT_SOURCE = false;
+constexpr bool FLAT_SOURCE = true;
 constexpr bool FLAT_TARGET = true;
+constexpr bool IGNORE_SOURCE = true;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -63,8 +64,6 @@ namespace PCG32 {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
 
 // ray
 struct Ray {
@@ -129,13 +128,9 @@ struct HitInfo {
     Type t;
 };
 
-
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
 
 // geometry
 struct Geometry {
@@ -143,10 +138,10 @@ struct Geometry {
     Type type;
     Geometry(const Shape& s, const Type& t) : shape(s), type(t) {}
     virtual float_type getLength() const = 0;
-    virtual bool intersect(const Ray& ray, HitInfo& hitInfo) = 0;
-    virtual Ray sampleMeanRay() = 0;
-    virtual std::pair<Ray, float_type> sampleDiffuseRay() = 0;
-    virtual std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() = 0;
+    virtual bool intersect(const Ray& ray, HitInfo& hitInfo) const = 0;
+    virtual Ray sampleMeanRay() const = 0;
+    virtual std::pair<Ray, float_type> sampleDiffuseRay() const = 0;
+    virtual std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() const = 0;
 };
 
 // line segment
@@ -158,30 +153,33 @@ struct LineSegment : Geometry {
 
     float_type getLength() const override { return length(p1 - p2); }
 
-    bool intersect(const Ray& ray, HitInfo& hitInfo) override {
-        const float_vec segDir = p2 - p1;
-        const float_type rayDir_x_segDir = cross(ray.d, segDir);
-        if (rayDir_x_segDir == 0) return false;
-        const float_type s = cross((p1 - ray.o), ray.d) / rayDir_x_segDir;
-        const float_type t = cross((p1 - ray.o), segDir) / rayDir_x_segDir;
-        if (0 <= s && s <= 1 && 0 < t) {
-            hitInfo.l = t;
-            hitInfo.p = ray.o + hitInfo.l * ray.d;
-            hitInfo.n = normalize((1 - s) * n1 + s * n2);
-            hitInfo.t = type;
-            return true;
+    bool intersect(const Ray& ray, HitInfo& hitInfo) const override {
+        if (IGNORE_SOURCE && type == Type::SOURCE) return false;
+        else {
+            const float_vec segDir = p2 - p1;
+            const float_type rayDir_x_segDir = cross(ray.d, segDir);
+            if (rayDir_x_segDir == 0) return false;
+            const float_type s = cross((p1 - ray.o), ray.d) / rayDir_x_segDir;
+            const float_type t = cross((p1 - ray.o), segDir) / rayDir_x_segDir;
+            if (0 <= s && s <= 1 && 0 < t) {
+                hitInfo.l = t;
+                hitInfo.p = ray.o + hitInfo.l * ray.d;
+                hitInfo.n = normalize((1 - s) * n1 + s * n2);
+                hitInfo.t = type;
+                return true;
+            }
+            return false;
         }
-        return false;
     }
 
-    Ray sampleMeanRay() override {
+    Ray sampleMeanRay() const override {
         const float_type s = PCG32::rand();
         const float_vec p = (1 - s) * p1 + s * p2;
         const float_vec n = (1 - s) * n1 + s * n2;
         return Ray(p + A_LITTLE_BIT * n, n);
     }
 
-    std::pair<Ray, float_type> sampleDiffuseRay() override {
+    std::pair<Ray, float_type> sampleDiffuseRay() const override {
         const Ray meanRay = sampleMeanRay();
         const float_vec n = meanRay.d;
         const float_type theta = std::asin(2 * PCG32::rand() - 1);
@@ -191,7 +189,7 @@ struct LineSegment : Geometry {
         return std::pair(Ray(meanRay.o, rotDir), std::abs(theta * RAD_TO_DEG));
     }
 
-    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() override {
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() const override {
         std::vector<Ray> p1ExtrRays, p2ExtrRays;
         for (int degrees = -90; degrees <= 90; ++degrees) {
             const float_type theta = degrees * DEG_TO_RAD;
@@ -205,7 +203,7 @@ struct LineSegment : Geometry {
         return std::pair(p1ExtrRays, p2ExtrRays);
     }
 
-    void writeLineSegment(std::ofstream& file) {
+    void writeLineSegment(std::ofstream& file) const {
         file << p1.x << "," << p1.y << "," << p2.x << "," << p2.y << "\n";
     }
 
@@ -221,38 +219,41 @@ struct Circle : Geometry {
 
     float_type getLength() const override { return PI * 2 * r; }
 
-    bool intersect(const Ray& ray, HitInfo& hitInfo) override {
-        const float_vec oc = c - ray.o;
-        const float_type hyp2 = dot(oc, oc);
-        if (hyp2 < r * r) return false;
-        const float_type hyp = std::sqrt(hyp2);
-        const float_vec ocDir = oc / hyp;
-        const float_type cos0 = dot(ray.d, ocDir);
-        if (cos0 <= 0) return false;
-        const float_type adj = hyp * cos0;
-        const float_type d2 = hyp2 - adj * adj;
-        if (d2 > r * r) return false;
-        if (d2 == r * r) {
-            hitInfo.l = adj;
-            hitInfo.p = ray.o + hitInfo.l * ray.d;
+    bool intersect(const Ray& ray, HitInfo& hitInfo) const override {
+        if (IGNORE_SOURCE && type == Type::SOURCE) return false;
+        else {
+            const float_vec oc = c - ray.o;
+            const float_type hyp2 = dot(oc, oc);
+            if (hyp2 < r * r) return false;
+            const float_type hyp = std::sqrt(hyp2);
+            const float_vec ocDir = oc / hyp;
+            const float_type cos0 = dot(ray.d, ocDir);
+            if (cos0 <= 0) return false;
+            const float_type adj = hyp * cos0;
+            const float_type d2 = hyp2 - adj * adj;
+            if (d2 > r * r) return false;
+            if (d2 == r * r) {
+                hitInfo.l = adj;
+                hitInfo.p = ray.o + hitInfo.l * ray.d;
+            }
+            else if (d2 < r * r) {
+                hitInfo.l = adj - std::sqrt(r * r - d2);
+                hitInfo.p = ray.o + hitInfo.l * ray.d;
+            }
+            hitInfo.n = normalize(hitInfo.p - c);
+            hitInfo.t = type;
+            return true;
         }
-        else if (d2 < r * r) {
-            hitInfo.l = adj - std::sqrt(r * r - d2);
-            hitInfo.p = ray.o + hitInfo.l * ray.d;
-        }
-        hitInfo.n = normalize(hitInfo.p - c);
-        hitInfo.t = type;
-        return true;
     }
 
-    Ray sampleMeanRay() override {
+    Ray sampleMeanRay() const override {
         const float_type theta = PCG32::rand() * 2 * PI;
         const float_vec p = c + r * float_vec(std::cos(theta), std::sin(theta));
         const float_vec n = (p - c) / r;
         return Ray(p, n);
     }
 
-    std::pair<Ray, float_type> sampleDiffuseRay() override {
+    std::pair<Ray, float_type> sampleDiffuseRay() const override {
         const Ray meanRay = sampleMeanRay();
         const float_vec n = meanRay.d;
         const float_type theta = std::asin(2 * PCG32::rand() - 1);
@@ -262,7 +263,7 @@ struct Circle : Geometry {
         return std::pair(Ray(meanRay.o, rotDir), std::abs(theta * RAD_TO_DEG));
     }
 
-    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() override {
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() const override {
         std::vector<Ray> p1ExtrRays, p2ExtrRays;
         for (int degrees = 0; degrees <= 360; degrees += 2) {
             const float_type theta = degrees * DEG_TO_RAD;
@@ -278,10 +279,102 @@ struct Circle : Geometry {
 
 };
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// bounding box
+struct BoundingBox {
+
+	float_vec min, max;
+
+    BoundingBox() : min(std::numeric_limits<float_type>::min(), std::numeric_limits<float_type>::min()),
+        max(std::numeric_limits<float_type>::max(), std::numeric_limits<float_type>::max()) {}
+
+    void fit(const LineSegment& l) {
+        if (l.p1.x < min.x) min.x = l.p1.x;
+        if (l.p1.y < min.y) min.y = l.p1.y;
+        if (l.p2.x < min.x) min.x = l.p2.x;
+        if (l.p2.y < min.y) min.y = l.p2.y;
+        if (l.p1.x > max.x) max.x = l.p1.x;
+        if (l.p1.y > max.y) max.y = l.p1.y;
+        if (l.p2.x > max.x) max.x = l.p2.x;
+        if (l.p2.y > max.y) max.y = l.p2.y;
+    }
+
+    bool intersect(const Ray& ray, HitInfo& minHit) const {
+        float_type tx1 = (min.x - ray.o.x) / ray.d.x;
+        float_type ty1 = (min.y - ray.o.y) / ray.d.y;
+        float_type tx2 = (max.x - ray.o.x) / ray.d.x;
+        float_type ty2 = (max.y - ray.o.y) / ray.d.y;
+        if (tx1 > tx2) {
+            const float_type temp = tx1;
+            tx1 = tx2;
+            tx2 = temp;
+        }
+        if (ty1 > ty2) {
+            const float_type temp = ty1;
+            ty1 = ty2;
+            ty2 = temp;
+        }
+        float_type t1 = tx1;
+        if (t1 < ty1) t1 = ty1;
+        float_type t2 = tx2;
+        if (t2 > ty2) t2 = ty2;
+        if (t1 > t2) return false;
+        if ((t1 < 0) && (t2 < 0)) return false;
+        minHit.l = t1;
+        return true;
+    }
+
+};
+
+// node
+struct Node {
+
+    int size;
+    BoundingBox bb;
+    Node* left = nullptr;
+    Node* right = nullptr;
+    const LineSegment* ls = nullptr;
+
+    Node(const std::vector<LineSegment>& v, const int& li, const int& ri) : size(ri - li + 1) {
+        if (size > 1) {
+            for (int i = li; i <= ri; ++i) bb.fit(v[i]);
+            left = new Node(v, li, li + size / 2 - 1);
+            right = new Node(v, li + size / 2, ri);
+        }
+        else ls = &v.at(li);
+    }
+
+    bool intersect(const Ray& ray, HitInfo& hitInfo) const {
+        if (size == 1) return ls->intersect(ray, hitInfo);
+        if (bb.intersect(ray, hitInfo)) {
+            if (left->intersect(ray, hitInfo)) return true;
+            if (right->intersect(ray, hitInfo)) return true;
+        }
+        return false;
+    }
+
+};
+
+// tree
+struct Tree {
+    Node* root = nullptr;
+    Tree() = default;
+    Tree(const std::vector<LineSegment>& v) { root = new Node(v, 0, static_cast<int>(v.size()) - 1); }
+    bool intersect(const Ray& ray, HitInfo& hitInfo) const { if (root) return root->intersect(ray, hitInfo); return false; }
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // mirror
 struct Mirror : Geometry {
 
     std::vector<LineSegment> segments;
+    Tree tree;
 
     Mirror() : Geometry(Shape::CONSTRUCTED, Type::MIRROR) {}
 
@@ -297,26 +390,31 @@ struct Mirror : Geometry {
         segments.emplace_back(Type::MIRROR, p1, p2, n1, n2);
     }
 
-    bool intersect(const Ray& ray, HitInfo& hitInfo) override {
+    void buildTree() {
+        tree = Tree(segments);
+    }
+
+    bool intersect(const Ray& ray, HitInfo& hitInfo) const override {
         for (auto s : segments) {
             if (s.intersect(ray, hitInfo)) return true;
         }
         return false;
+        // return tree.intersect(ray, hitInfo);
     }
 
-    Ray sampleMeanRay() override {
+    Ray sampleMeanRay() const override {
         return segments[PCG32::rand() * segments.size()].sampleMeanRay();
     }
 
-    std::pair<Ray, float_type> sampleDiffuseRay() override {
+    std::pair<Ray, float_type> sampleDiffuseRay() const override {
         return segments[PCG32::rand() * segments.size()].sampleDiffuseRay();
     }
 
-    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() override {
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() const override {
         return std::pair(std::vector<Ray>(), std::vector<Ray>());
     }
 
-    void writeMirror(std::ofstream& file) {
+    void writeMirror(std::ofstream& file) const {
         for (auto s : segments) {
             s.writeLineSegment(file);
         }
@@ -455,6 +553,12 @@ struct TwoMirrorConcentrator : Geometry {
             n2 = n2_new;
         }
 
+        // build trees
+        m1a.buildTree();
+        m1b.buildTree();
+        m2a.buildTree();
+        m2b.buildTree();
+
         // build barrier
         buildBarrier();
     }
@@ -469,7 +573,7 @@ struct TwoMirrorConcentrator : Geometry {
         barrier.addSegment(bottomLeft, bottomRight, float_vec(0, 1), float_vec(0, 1));
     }
 
-    bool intersect(const Ray& ray, HitInfo& hitInfo) override {
+    bool intersect(const Ray& ray, HitInfo& hitInfo) const override {
         if (m1a.intersect(ray, hitInfo)) {
             hitInfo.t = Type::MIRROR_1a;
             return true;
@@ -493,7 +597,7 @@ struct TwoMirrorConcentrator : Geometry {
         return false;
     }
 
-    Ray sampleMeanRay() override {
+    Ray sampleMeanRay() const override {
         const float_type Randy = PCG32::rand();
         if (Randy < 0.25) return m1a.sampleMeanRay();
         if (0.25 <= Randy && Randy < 0.5) return m1b.sampleMeanRay();
@@ -501,7 +605,7 @@ struct TwoMirrorConcentrator : Geometry {
         return m2b.sampleMeanRay();
     }
 
-    std::pair<Ray, float_type> sampleDiffuseRay() override {
+    std::pair<Ray, float_type> sampleDiffuseRay() const override {
         const float_type Randolf = PCG32::rand();
         if (Randolf < 0.25) return m1a.sampleDiffuseRay();
         if (0.25 <= Randolf && Randolf < 0.5) return m1b.sampleDiffuseRay();
@@ -509,11 +613,11 @@ struct TwoMirrorConcentrator : Geometry {
         return m2b.sampleDiffuseRay();
     }
 
-    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() override {
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() const override {
         return std::pair(std::vector<Ray>(), std::vector<Ray>());
     }
 
-    void writeTwoMirrorConcentrator(const std::string& filePath) {
+    void writeTwoMirrorConcentrator(const std::string& filePath) const {
         std::ofstream file;
         file.open(filePath + "mirror1a.csv");
         m1a.writeMirror(file);
@@ -565,8 +669,6 @@ struct Design {
         Ray r = ray;
         for (int i = 0; i < 3; ++i) {
             if (HitInfo h; intersect(r, h)) {
-                if (i == 0 && h.t != Type::MIRROR_1a && h.t != Type::MIRROR_1b) return Path();
-                if (i == 1 && h.t != Type::MIRROR_2a && h.t != Type::MIRROR_2b) return Path();
                 path.addVertex(h.p);
                 float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
                 r = Ray(h.p + A_LITTLE_BIT * refl, refl);
@@ -584,10 +686,18 @@ struct Design {
             threadVectors[threadID].push_back(traceRay(ray));
         }
         std::vector<Path> paths;
-        for (const auto& v : threadVectors) {
-            paths.insert(paths.end(), v.begin(), v.end());
-        }
+        for (const auto& v : threadVectors) paths.insert(paths.end(), v.begin(), v.end());
         return paths;
+    }
+
+    void traceDiffuseRays(const std::string& filePath, const int& numRays) const {
+        std::vector<Ray> rays;
+        for (int i = 0; i < numRays; ++i) rays.push_back(source->sampleDiffuseRay().first);
+        std::vector<Path> paths(rayTrace(rays));
+        std::ofstream file;
+        file.open(filePath + "diffuse.csv");
+        for (auto path : paths) path.writePath(file);
+        file.close();
     }
 
     void traceExtremeRays(const std::string& filePath) const {
@@ -650,15 +760,20 @@ struct Design {
         for (int i = 0; i < numRays; ++i) {
             int threadID = omp_get_thread_num();
             Ray r = source->sampleDiffuseRay().first;
-            for (int j = 0; j < 3; ++j) {
+            for (int j = 0; j < 10; ++j) {
                 if (HitInfo h; intersect(r, h)) {
-                    if (j == 0 && h.t != Type::MIRROR_1a && h.t != Type::MIRROR_1b) break;
-                    if (j == 1 && h.t != Type::MIRROR_2a && h.t != Type::MIRROR_2b) break;
-                    if (j == 2 && h.t != Type::TARGET) break;
-                    if (j == 2 && h.t == Type::TARGET) {
+                    if (h.t == Type::TARGET) {
                         threadCounts[threadID] += 1;
                         break;
                     }
+                    if (h.t == Type::BARRIER) break;
+                    // if (j == 0 && h.t != Type::MIRROR_1a && h.t != Type::MIRROR_1b) break;
+                    // if (j == 1 && h.t != Type::MIRROR_2a && h.t != Type::MIRROR_2b) break;
+                    // if (j == 2 && h.t != Type::TARGET) break;
+                    // if (j == 2 && h.t == Type::TARGET) {
+                    //     threadCounts[threadID] += 1;
+                    //     break;
+                    // }
                     float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
                     r = Ray(h.p + A_LITTLE_BIT * refl, refl);
                 }
@@ -667,11 +782,11 @@ struct Design {
         }
         int finalCount = 0;
         for (const auto& count : threadCounts) finalCount += count;
-        return float_type(finalCount) / numRays;
+        return static_cast<float_type>(finalCount) / static_cast<float_type>(numRays);
     }
 
     std::vector<float_type> traceDetailedHitData(const int& numRays) const {
-        std::vector<std::vector<float_type>> threadCounts(omp_get_max_threads(), std::vector<float_type>(4, 0));
+        std::vector<std::vector<int>> threadCounts(omp_get_max_threads(), std::vector<int>(4, 0));
         #pragma omp parallel for schedule(dynamic, 1)
         for (int i = 0; i < numRays; ++i) {
             int threadID = omp_get_thread_num();
@@ -702,16 +817,14 @@ struct Design {
             finalCounts[3] += counts[3];
         }
         std::vector<float_type> finalMetrics(4);
-        finalMetrics[0] = finalCounts[0] / static_cast<float_type>(numRays);
-        finalMetrics[1] = finalCounts[1] / static_cast<float_type>(numRays);
-        finalMetrics[2] = finalCounts[2] / static_cast<float_type>(numRays);
-        finalMetrics[3] = finalCounts[3] / static_cast<float_type>(numRays);
+        finalMetrics[0] = static_cast<float_type>(finalCounts[0]) / static_cast<float_type>(numRays);
+        finalMetrics[1] = static_cast<float_type>(finalCounts[1]) / static_cast<float_type>(numRays);
+        finalMetrics[2] = static_cast<float_type>(finalCounts[2]) / static_cast<float_type>(numRays);
+        finalMetrics[3] = static_cast<float_type>(finalCounts[3]) / static_cast<float_type>(numRays);
         return finalMetrics;
     }
 
 };
-
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -727,13 +840,15 @@ int main(int argc, char* argv[]) {
     // finite system
     if (FINITE_SYSTEM) {
 
+
+
         // output
         std::string outputDataPath = "data_finite/";
         if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
         std::ofstream file;
 
         // input
-        const float_type f1(1), L(4), f2(1), da(0.0001), a_max(55 * DEG_TO_RAD), radius(f1 / 5);
+        const float_type f1(1), L(4), f2(1), da(0.001), a_max(90 * DEG_TO_RAD), radius(f1 / 5);
         file.open(outputDataPath + "input.csv");
         file << FLAT_SOURCE << "," << FLAT_TARGET << "," << radius << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "\n";
         file.close();
@@ -759,6 +874,8 @@ int main(int argc, char* argv[]) {
         tmc.buildFinite(Sa, SB, f1, L, f2, da, a_max);
         tmc.writeTwoMirrorConcentrator(outputDataPath);
 
+
+
         // design
         Design design;
         if (FLAT_SOURCE) design.addGeometry(&flatSource);
@@ -768,10 +885,17 @@ int main(int argc, char* argv[]) {
         // extreme rays
         design.traceExtremeRays(outputDataPath);
 
-        // phase space
+        // add target
         if (FLAT_TARGET) design.addGeometry(&flatTarget);
         else design.addGeometry(&cylindricalTarget);
+
+        // diffuse rays
+        design.traceDiffuseRays(outputDataPath, 5);
+
+        // phase space
         design.tracePhaseSpace(outputDataPath, 10000);
+
+
 
         // hit report
         const int numberOfDesigns = 20;
@@ -790,13 +914,22 @@ int main(int argc, char* argv[]) {
             else designs[i].addGeometry(&cylindricalTargets[i]);
             designs[i].addGeometry(&tmc);
         }
-        std::vector<std::pair<float_type, std::vector<float_type>>> hitData;
+        std::vector<float_vec> hitData;
         const int numberOfTrials = 3;
         const int numberOfRays = 10000;
-        for (const auto& d : designs) for (int i = 0; i < numberOfTrials; ++i) hitData.emplace_back(d.target->getLength() / d.source->getLength(), d.traceDetailedHitData(numberOfRays));
+        for (const auto& d : designs) for (int i = 0; i < numberOfTrials; ++i) hitData.emplace_back(d.target->getLength() / d.source->getLength(), d.traceHitData(numberOfRays));
         file.open(outputDataPath + "hitdata.csv");
-        for (const auto& p : hitData) file << p.first << "," << p.second[0] << "," << p.second[1] << "," << p.second[2] << "," << p.second[3] << "\n";
+        for (const auto& p : hitData) file << p.x << "," << p.y << "\n";
         file.close();
+        // std::vector<std::pair<float_type, std::vector<float_type>>> hitData;
+        // const int numberOfTrials = 3;
+        // const int numberOfRays = 10000;
+        // for (const auto& d : designs) for (int i = 0; i < numberOfTrials; ++i) hitData.emplace_back(d.target->getLength() / d.source->getLength(), d.traceDetailedHitData(numberOfRays));
+        // file.open(outputDataPath + "hitdata.csv");
+        // for (const auto& p : hitData) file << p.first << "," << p.second[0] << "," << p.second[1] << "," << p.second[2] << "," << p.second[3] << "\n";
+        // file.close();
+
+
         
     }
 
