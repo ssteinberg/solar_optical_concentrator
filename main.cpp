@@ -22,8 +22,7 @@ using namespace linalg::aliases;
 
 // floating-point precision
 using float_type = double;
-constexpr int NUMBER_OF_DIMENSIONS = 2;
-typedef linalg::vec<float_type, NUMBER_OF_DIMENSIONS> float_vec;
+typedef linalg::vec<float_type, 2> float_vec;
 constexpr float_type A_LITTLE_BIT = 0.00001;
 
 // global constants
@@ -35,7 +34,7 @@ constexpr float_type EPSILON = 0.01;
 constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
 
 // switches
-constexpr bool FINITE_SYSTEM = true;
+constexpr bool FINITE_SYSTEM = false;
 constexpr bool FLAT_SOURCE = true;
 constexpr bool FLAT_TARGET = true;
 constexpr bool IGNORE_SOURCE = true;
@@ -441,60 +440,6 @@ struct TwoMirrorConcentrator : Geometry {
         return m1a.getLength() + m1b.getLength() + m2a.getLength() + m2b.getLength();
     }
 
-    void buildInfinite(const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max) {
-
-        // initial conditions
-        float_vec p(-L, 0), pp(f, 0), n(1, 0), np(-1, 0);
-        float_type R(L + f), r(f);
-
-        // numerical integration
-        float_type B(0);
-        while (std::abs(B) < B_max) {
-
-            // step in beta
-            const float_type B_new = B + dB;
-
-            // precomputation
-            const float_type sinB = std::sin(B);
-            const float_type cosB = std::cos(B);
-            const float_type d = R - 2 * (L + f);
-
-            // (7)
-            const float_type I = 1;
-            const float_type S = 1;
-            const float_type dy = (inv ? -1 : 1) * S / I * dB;
-            const float_type dx = dy * (p.y - r * sinB) / (r * (cosB - 1) + 2 * (L + f));
-            const float_vec p_new(p.x + dx, p.y + dy);
-
-            // (11)
-            const float_type dr = r * ((r + d) * sinB - p.y * cosB) / ((r + d) * cosB + p.y * sinB - r - R) * dB;
-            const float_type r_new = r + dr;
-            const float_vec pp_new = r_new * float_vec(std::cos(B_new), std::sin(B_new));
-
-            // new directions
-            float_vec K_int = pp_new - p_new;
-            const float_type R_new = length(K_int);
-            // const float_type R_new = 2 * (L + f) + p_new.x - r_new;
-            K_int /= R_new;
-            const float_vec K_out = -pp_new / r_new;
-            const float_vec n_new = normalize(K_int - K_in);
-            const float_vec np_new = normalize(K_out - K_int);
-
-            // store coordinates and normals
-            m1a.addSegment(p, p_new, n, n_new);
-            m2a.addSegment(pp, pp_new, np, np_new);
-
-            // update
-            p = p_new;
-            pp = pp_new;
-            n = n_new;
-            np = np_new;
-            R = R_new;
-            r = r_new;
-            B = B_new;
-        }
-    }
-
     void buildFinite(const auto& Sa, const auto& SB, const float_type& f1, const float_type& L, const float_type& f2, const float_type& da, const float_type& a_max) {
 
         // reset
@@ -554,14 +499,178 @@ struct TwoMirrorConcentrator : Geometry {
         }
 
         // build trees
-        m1a.buildTree();
-        m1b.buildTree();
-        m2a.buildTree();
-        m2b.buildTree();
+        // m1a.buildTree();
+        // m1b.buildTree();
+        // m2a.buildTree();
+        // m2b.buildTree();
 
         // build barrier
         buildBarrier();
     }
+
+    void buildInfinite(const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max) {
+
+        // initial conditions
+        float_vec p(-L, 0), pp(f, 0), n(1, 0), np(-1, 0);
+        float_type R(L + f), r(f);
+
+        // numerical integration
+        float_type B(0);
+        while (std::abs(B) < B_max) {
+
+            // step in beta
+            const float_type B_new = B + dB;
+
+            // precomputation
+            const float_type sinB = std::sin(B);
+            const float_type cosB = std::cos(B);
+            const float_type d = R - 2 * (L + f);
+
+            // (7)
+            const float_type I = 1;
+            const float_type S = 1;
+            const float_type dy = (inv ? -1 : 1) * S / I * dB;
+            const float_type dx = dy * (p.y - r * sinB) / (r * (cosB - 1) + 2 * (L + f));
+            const float_vec p_new(p.x + dx, p.y + dy);
+
+            // (11)
+            const float_type dr = r * ((r + d) * sinB - p.y * cosB) / ((r + d) * cosB + p.y * sinB - r - R) * dB;
+            const float_type r_new = r + dr;
+            const float_vec pp_new = r_new * float_vec(std::cos(B_new), std::sin(B_new));
+
+            // new directions
+            float_vec K_int = pp_new - p_new;
+            const float_type R_new = length(K_int);
+            // const float_type R_new = 2 * (L + f) + p_new.x - r_new;
+            K_int /= R_new;
+            const float_vec K_out = -pp_new / r_new;
+            const float_vec n_new = normalize(K_int - K_in);
+            const float_vec np_new = normalize(K_out - K_int);
+
+            // store coordinates and normals
+            m1a.addSegment(p, p_new, n, n_new);
+            m2a.addSegment(pp, pp_new, np, np_new);
+
+            // update
+            p = p_new;
+            pp = pp_new;
+            n = n_new;
+            np = np_new;
+            R = R_new;
+            r = r_new;
+            B = B_new;
+        }
+    }
+
+
+
+    float_vec calcCone(const float_vec& apex, const std::vector<float_vec>& vertices) {
+        float_type a_max(0);
+        float_vec u(0, 0);
+        for (const auto& v1 : vertices) {
+            for (const auto& v2 : vertices) {
+                const float_vec l1(normalize(v1 - apex)), l2(normalize(v2 - apex));
+                const float_type a(std::abs(cross(l1, l2)));
+                if (a > a_max) {
+                    a_max = a;
+                    u = normalize(l1 + l2);
+                }
+            }
+        }
+        return u;
+    }
+
+    bool traceRay(const Ray& r, HitInfo& h, Mirror& t) const {
+        bool hit = false;
+        HitInfo temp;
+        h.l = std::numeric_limits<float_type>::max();
+        if(t.intersect(r, temp)) {
+            if (temp.l < h.l) {
+                hit = true;
+                h = temp;
+            }
+        }
+        return hit;
+    }
+
+    void buildInfArbTarg(const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max) {
+
+        // reset
+        reset();
+
+        // triangular target
+        const float_vec tp1(1, 1), tp2(-2, 0), tp3(0, -1);
+        const float_vec tt1(tp1 - tp2), tt2(tp2 - tp3), tt3(tp3 - tp1);
+        const float_vec tn1(-tt1.y, tt1.x), tn2(-tt2.y, tt2.x), tn3(-tt3.y, tt3.x);
+        Mirror t;
+        t.addSegment(tp1, tp2, tn1, tn1);
+        t.addSegment(tp2, tp3, tn2, tn2);
+        t.addSegment(tp3, tp1, tn3, tn3);
+
+        // initial conditions
+        float_vec p1(-L, 0), p2(f, 0), n1(1, 0);
+        float_type R(L + f), l(f);
+
+        // calculate cone to initialize K_out and n2
+        const std::vector<float_vec> tpts = {tp1, tp2, tp3};
+        float_vec K_out(calcCone(p2, tpts));
+        float_vec n2(normalize(p2 - p1) - K_out);
+
+        // trace ray to initialize r
+        if (HitInfo h; traceRay(Ray(p2, K_out), h, t)) {
+            float_type r(h.l), F(2 * L + f + r);
+
+            // numerical integration
+            float_type B(0);
+            while (std::abs(B) < B_max) {
+
+                // step in beta
+                const float_type B_new(B + dB);
+
+                // precomputation
+                const float_type sinB(std::sin(B)), cosB(std::cos(B));
+
+                // p1
+                const float_type I(1), S(1);
+                const float_type dy((inv ? -1 : 1) * S / I * dB); // also * const.
+                const float_type dx(dy * (p1.y - l * sinB) / (l * cosB - r + F));
+                const float_vec p1_new(p1.x + dx, p1.y + dy);
+
+                // p2
+                const float_type lump((-R * K_out.y + l * sinB - p1.y) / (R * K_out.x - l * cosB + p1.x));
+                const float_type dl(l * (lump * cosB + sinB) / (cosB - lump * sinB) * dB);
+                const float_type l_new(l + dl);
+                const float_vec p2_new(l_new * float_vec(std::cos(B_new), std::sin(B_new)));
+
+                // directions
+                float_vec K_int(p2_new - p1_new);
+                const float_type R_new(length(K_int));
+                K_int /= R_new;
+                K_out = calcCone(p2_new, tpts);
+                if (HitInfo hh; traceRay(Ray(p2, K_out), hh, t)) r = hh.l;
+                else std::cout << "error: no hit" << std::endl;
+
+                // normals
+                const float_vec n1_new(normalize(K_int - K_in));
+                const float_vec n2_new(normalize(K_out - K_int));
+
+                // store coordinates and normals
+                m1a.addSegment(p1, p1_new, n1, n1_new);
+                m2a.addSegment(p2, p2_new, n2, n2_new);
+
+                // update
+                B = B_new;
+                p1 = p1_new;
+                p2 = p2_new;
+                n1 = n1_new;
+                n2 = n2_new;
+                R = R_new;
+                l = l_new;
+            }
+        }
+    }
+
+
 
     void buildBarrier() {
         const float_type x_max = 2 * std::max(std::abs(m1a.segments.front().p1.x), std::abs(m2a.segments.front().p1.x));
@@ -760,7 +869,7 @@ struct Design {
         for (int i = 0; i < numRays; ++i) {
             int threadID = omp_get_thread_num();
             Ray r = source->sampleDiffuseRay().first;
-            for (int j = 0; j < 10; ++j) {
+            for (int j = 0; j < 3; ++j) {
                 if (HitInfo h; intersect(r, h)) {
                     if (h.t == Type::TARGET) {
                         threadCounts[threadID] += 1;
@@ -840,15 +949,13 @@ int main(int argc, char* argv[]) {
     // finite system
     if (FINITE_SYSTEM) {
 
-
-
         // output
         std::string outputDataPath = "data_finite/";
         if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
         std::ofstream file;
 
         // input
-        const float_type f1(1), L(4), f2(1), da(0.001), a_max(90 * DEG_TO_RAD), radius(f1 / 5);
+        const float_type f1(1), L(4), f2(1), da(0.0001), a_max(55 * DEG_TO_RAD), radius(f1 / 50);
         file.open(outputDataPath + "input.csv");
         file << FLAT_SOURCE << "," << FLAT_TARGET << "," << radius << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "\n";
         file.close();
@@ -929,9 +1036,34 @@ int main(int argc, char* argv[]) {
         // for (const auto& p : hitData) file << p.first << "," << p.second[0] << "," << p.second[1] << "," << p.second[2] << "," << p.second[3] << "\n";
         // file.close();
 
-
-        
     }
+
+
+
+    // infinite system
+    if (!FINITE_SYSTEM) {
+
+        // output
+        std::string outputDataPath = "data_infinite/";
+        if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
+        std::ofstream file;
+
+        // input
+        const bool inv(true);
+        const float_type L(10), f(5), dB(0.01), B_max(90 * DEG_TO_RAD);
+        const float_vec K_in(-1, 0);
+        file.open(outputDataPath + "input.csv");
+        file << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
+        file.close();
+
+        // two-mirror concentrator
+        TwoMirrorConcentrator tmc;
+        tmc.buildInfArbTarg(inv, L, f, K_in, dB, B_max);
+        tmc.writeTwoMirrorConcentrator(outputDataPath);
+
+    }
+
+
 
 }
 
