@@ -79,7 +79,7 @@ struct Path {
         vertices.push_back(v);
     }
 
-    void writePath(std::ofstream& file) {
+    void writePath(std::ofstream& file) const {
         const int pathLength = vertices.size() - 1;
         if (pathLength > 0) {
             for (int i = 0; i < pathLength; ++i) {
@@ -90,7 +90,7 @@ struct Path {
         }
     }
 
-    void writeFinalSegment(std::ofstream& file) {
+    void writeFinalSegment(std::ofstream& file) const {
         const int pathLength = vertices.size() - 1;
         if (pathLength > 0) {
             const float_vec v1 = vertices[pathLength - 1];
@@ -140,7 +140,8 @@ struct Geometry {
     virtual bool intersect(const Ray& ray, HitInfo& hitInfo) const = 0;
     virtual Ray sampleMeanRay() const = 0;
     virtual std::pair<Ray, float_type> sampleDiffuseRay() const = 0;
-    virtual std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() const = 0;
+    virtual std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeDiffuseRays() const = 0;
+    virtual std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeInfiniteRays(const int& numRays) const = 0;
 };
 
 // line segment
@@ -188,7 +189,7 @@ struct LineSegment : Geometry {
         return std::pair(Ray(meanRay.o, rotDir), std::abs(theta * RAD_TO_DEG));
     }
 
-    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() const override {
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeDiffuseRays() const override {
         std::vector<Ray> p1ExtrRays, p2ExtrRays;
         for (int degrees = -90; degrees <= 90; ++degrees) {
             const float_type theta = degrees * DEG_TO_RAD;
@@ -196,10 +197,28 @@ struct LineSegment : Geometry {
             const float_type sin0 = std::sin(theta);
             const float_vec p1RotDir(n1.x * cos0 - n1.y * sin0, n1.x * sin0 + n1.y * cos0);
             const float_vec p2RotDir(n2.x * cos0 - n2.y * sin0, n2.x * sin0 + n2.y * cos0);
-            p1ExtrRays.emplace_back(p1, p1RotDir);
-            p2ExtrRays.emplace_back(p2, p2RotDir);
+            p1ExtrRays.emplace_back(p1 + A_LITTLE_BIT * n1, p1RotDir);
+            p2ExtrRays.emplace_back(p2 + A_LITTLE_BIT * n2, p2RotDir);
         }
         return std::pair(p1ExtrRays, p2ExtrRays);
+    }
+
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeInfiniteRays(const int& numRays) const override {
+        std::vector<Ray> posExtrRays, negExtrRays;
+        const float_type inc(1 / static_cast<float_type>(numRays));
+        float_type l(0);
+        while (l <= 1) {
+            const float_vec p((1 - l) * p1 + l * p2);
+            const float_vec n((1 - l) * n1 + l * n2);
+            const float_type cosPos(std::cos(EPSILON_OVER_TWO)), sinPos(std::sin(EPSILON_OVER_TWO));
+            const float_type cosNeg(std::cos(-EPSILON_OVER_TWO)), sinNeg(std::sin(-EPSILON_OVER_TWO));
+            const float_vec posRotDir(n.x * cosPos - n.y * sinPos, n.x * sinPos + n.y * cosPos);
+            const float_vec negRotDir(n.x * cosNeg - n.y * sinNeg, n.x * sinNeg + n.y * cosNeg);
+            posExtrRays.emplace_back(p + A_LITTLE_BIT * n, posRotDir);
+            negExtrRays.emplace_back(p + A_LITTLE_BIT * n, negRotDir);
+            l += inc;
+        }
+        return std::pair(posExtrRays, negExtrRays);
     }
 
     void writeLineSegment(std::ofstream& file) const {
@@ -262,7 +281,7 @@ struct Circle : Geometry {
         return std::pair(Ray(meanRay.o, rotDir), std::abs(theta * RAD_TO_DEG));
     }
 
-    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() const override {
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeDiffuseRays() const override {
         std::vector<Ray> p1ExtrRays, p2ExtrRays;
         for (int degrees = 0; degrees <= 360; degrees += 2) {
             const float_type theta = degrees * DEG_TO_RAD;
@@ -274,6 +293,10 @@ struct Circle : Geometry {
             p2ExtrRays.emplace_back(p, p2RotDir);
         }
         return std::pair(p1ExtrRays, p2ExtrRays);
+    }
+
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeInfiniteRays(const int& numRays) const override {
+        return std::pair(std::vector<Ray>(), std::vector<Ray>());
     }
 
 };
@@ -369,6 +392,8 @@ struct Tree {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+
+
 // mirror
 struct Mirror : Geometry {
 
@@ -409,7 +434,11 @@ struct Mirror : Geometry {
         return segments[PCG32::rand() * segments.size()].sampleDiffuseRay();
     }
 
-    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() const override {
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeDiffuseRays() const override {
+        return std::pair(std::vector<Ray>(), std::vector<Ray>());
+    }
+
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeInfiniteRays(const int& numRays) const override {
         return std::pair(std::vector<Ray>(), std::vector<Ray>());
     }
 
@@ -420,6 +449,8 @@ struct Mirror : Geometry {
     }
 
 };
+
+
 
 // two-mirror concentrator
 struct TwoMirrorConcentrator : Geometry {
@@ -466,7 +497,7 @@ struct TwoMirrorConcentrator : Geometry {
             const float_vec p1_new(-r1_new * std::cos(a_new) - L, r1_new * std::sin(a_new));
 
             // M2
-            const float_type dB = Sa(a) * da / SB(B);
+            const float_type dB = -Sa(a) * da / SB(B) * PI; // multiplied by pi and negated for inverted design
             const float_type B_new = B + dB;
             const float_type dr2 = (r1 * r2 * sinaB + L * r2 * sinB) / (r1 * cosaB + L * cosB - r1 + F) * dB;
             const float_type r2_new = r2 + dr2;
@@ -598,21 +629,27 @@ struct TwoMirrorConcentrator : Geometry {
         // reset
         reset();
 
+        // flat target
+        const float_vec tp1(0, -0.5), tp2(0, 0.5);
+        const float_vec tn(1, 0);
+        Mirror t; t.addSegment(tp1, tp2, tn, tn);
+        const std::vector<float_vec> tpts = {tp1, tp2};
+
         // triangular target
-        const float_vec tp1(1, 1), tp2(-2, 0), tp3(0, -1);
-        const float_vec tt1(tp1 - tp2), tt2(tp2 - tp3), tt3(tp3 - tp1);
-        const float_vec tn1(-tt1.y, tt1.x), tn2(-tt2.y, tt2.x), tn3(-tt3.y, tt3.x);
-        Mirror t;
-        t.addSegment(tp1, tp2, tn1, tn1);
-        t.addSegment(tp2, tp3, tn2, tn2);
-        t.addSegment(tp3, tp1, tn3, tn3);
+        // const float_vec tp1(1, 1), tp2(-2, 0), tp3(0, -1);
+        // const float_vec tt1(tp1 - tp2), tt2(tp2 - tp3), tt3(tp3 - tp1);
+        // const float_vec tn1(-tt1.y, tt1.x), tn2(-tt2.y, tt2.x), tn3(-tt3.y, tt3.x);
+        // Mirror t;
+        // t.addSegment(tp1, tp2, tn1, tn1);
+        // t.addSegment(tp2, tp3, tn2, tn2);
+        // t.addSegment(tp3, tp1, tn3, tn3);
+        // const std::vector<float_vec> tpts = {tp1, tp2, tp3};
 
         // initial conditions
         float_vec p1(-L, 0), p2(f, 0), n1(1, 0);
         float_type R(L + f), l(f);
 
         // calculate cone to initialize K_out and n2
-        const std::vector<float_vec> tpts = {tp1, tp2, tp3};
         float_vec K_out(calcCone(p2, tpts));
         float_vec n2(normalize(p2 - p1) - K_out);
 
@@ -656,7 +693,9 @@ struct TwoMirrorConcentrator : Geometry {
 
                 // store coordinates and normals
                 m1a.addSegment(p1, p1_new, n1, n1_new);
+                m1b.addSegment(float_vec(p1.x, -p1.y), float_vec(p1_new.x, -p1_new.y), float_vec(n1.x, -n1.y), float_vec(n1_new.x, -n1_new.y));
                 m2a.addSegment(p2, p2_new, n2, n2_new);
+                m2b.addSegment(float_vec(p2.x, -p2.y), float_vec(p2_new.x, -p2_new.y), float_vec(n2.x, -n2.y), float_vec(n2_new.x, -n2_new.y));
 
                 // update
                 B = B_new;
@@ -668,17 +707,20 @@ struct TwoMirrorConcentrator : Geometry {
                 l = l_new;
             }
         }
+
+        // build barrier
+        buildBarrier();
     }
 
 
 
     void buildBarrier() {
-        const float_type x_max = 2 * std::max(std::abs(m1a.segments.front().p1.x), std::abs(m2a.segments.front().p1.x));
-        const float_type y_max = 2 * std::max(std::abs(m1a.segments.back().p2.y), std::abs(m2a.segments.back().p2.y));
+        const float_type x_max = 1.25 * std::max(std::abs(m1a.segments.front().p1.x), std::abs(m2a.segments.front().p1.x));
+        const float_type y_max = 1.25 * std::max(std::abs(m1a.segments.back().p2.y), std::abs(m2a.segments.back().p2.y));
         const float_vec bottomRight(x_max, -y_max), topRight(x_max, y_max), topLeft(-x_max, y_max), bottomLeft(-x_max, -y_max);
         barrier.addSegment(bottomRight, topRight, float_vec(-1, 0), float_vec(-1, 0));
         barrier.addSegment(topRight, topLeft, float_vec(0, -1), float_vec(0, -1));
-        barrier.addSegment(topRight, bottomRight, float_vec(1, 0), float_vec(1, 0));
+        barrier.addSegment(topLeft, bottomLeft, float_vec(1, 0), float_vec(1, 0));
         barrier.addSegment(bottomLeft, bottomRight, float_vec(0, 1), float_vec(0, 1));
     }
 
@@ -722,7 +764,11 @@ struct TwoMirrorConcentrator : Geometry {
         return m2b.sampleDiffuseRay();
     }
 
-    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() const override {
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeDiffuseRays() const override {
+        return std::pair(std::vector<Ray>(), std::vector<Ray>());
+    }
+
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeInfiniteRays(const int& numRays) const override {
         return std::pair(std::vector<Ray>(), std::vector<Ray>());
     }
 
@@ -743,6 +789,8 @@ struct TwoMirrorConcentrator : Geometry {
     }
 
 };
+
+
 
 // system
 struct Design {
@@ -779,6 +827,7 @@ struct Design {
         for (int i = 0; i < 3; ++i) {
             if (HitInfo h; intersect(r, h)) {
                 path.addVertex(h.p);
+                if (h.t == Type::TARGET) break;
                 float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
                 r = Ray(h.p + A_LITTLE_BIT * refl, refl);
             }
@@ -799,6 +848,16 @@ struct Design {
         return paths;
     }
 
+    void traceMeanRays(const std::string& filePath, const int& numRays) {
+        std::vector<Ray> rays;
+        for (int i = 0; i < numRays; ++i) rays.push_back(source->sampleMeanRay());
+        std::vector<Path> paths(rayTrace(rays));
+        std::ofstream file;
+        file.open(filePath + "mean.csv");
+        for (auto path : paths) path.writePath(file);
+        file.close();
+    }
+
     void traceDiffuseRays(const std::string& filePath, const int& numRays) const {
         std::vector<Ray> rays;
         for (int i = 0; i < numRays; ++i) rays.push_back(source->sampleDiffuseRay().first);
@@ -809,14 +868,26 @@ struct Design {
         file.close();
     }
 
-    void traceExtremeRays(const std::string& filePath) const {
-        auto extremeRays = source->generateExtremeRays();
+    void traceExtremeDiffuseRays(const std::string& filePath) const {
+        auto extremeRays = source->generateExtremeDiffuseRays();
         auto paths = std::pair(rayTrace(extremeRays.first), rayTrace(extremeRays.second));
         std::ofstream file;
-        file.open(filePath + "extreme1.csv");
+        file.open(filePath + "extrdiff1.csv");
         for (auto path : paths.first) path.writeFinalSegment(file);
         file.close();
-        file.open(filePath + "extreme2.csv");
+        file.open(filePath + "extrdiff2.csv");
+        for (auto path : paths.second) path.writeFinalSegment(file);
+        file.close();
+    }
+
+    void traceExtremeInfiniteRays(const std::string& filePath, const int& numRays) {
+        auto extremeRays = source->generateExtremeInfiniteRays(numRays);
+        auto paths = std::pair(rayTrace(extremeRays.first), rayTrace(extremeRays.second));
+        std::ofstream file;
+        file.open(filePath + "extrinf1.csv");
+        for (auto path : paths.first) path.writeFinalSegment(file);
+        file.close();
+        file.open(filePath + "extrinf2.csv");
         for (auto path : paths.second) path.writeFinalSegment(file);
         file.close();
     }
@@ -935,6 +1006,8 @@ struct Design {
 
 };
 
+
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -955,7 +1028,7 @@ int main(int argc, char* argv[]) {
         std::ofstream file;
 
         // input
-        const float_type f1(1), L(4), f2(1), da(0.0001), a_max(55 * DEG_TO_RAD), radius(f1 / 50);
+        const float_type f1(10), L(50), f2(2), da(0.0001), a_max(75 * DEG_TO_RAD), radius(f1 / 1000);
         file.open(outputDataPath + "input.csv");
         file << FLAT_SOURCE << "," << FLAT_TARGET << "," << radius << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "\n";
         file.close();
@@ -990,7 +1063,7 @@ int main(int argc, char* argv[]) {
         design.addGeometry(&tmc);
 
         // extreme rays
-        design.traceExtremeRays(outputDataPath);
+        design.traceExtremeDiffuseRays(outputDataPath);
 
         // add target
         if (FLAT_TARGET) design.addGeometry(&flatTarget);
@@ -1049,8 +1122,8 @@ int main(int argc, char* argv[]) {
         std::ofstream file;
 
         // input
-        const bool inv(true);
-        const float_type L(10), f(5), dB(0.01), B_max(90 * DEG_TO_RAD);
+        const bool inv(false);
+        const float_type L(3), f(0.5), dB(0.0001), B_max(80 * DEG_TO_RAD);
         const float_vec K_in(-1, 0);
         file.open(outputDataPath + "input.csv");
         file << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
@@ -1060,6 +1133,37 @@ int main(int argc, char* argv[]) {
         TwoMirrorConcentrator tmc;
         tmc.buildInfArbTarg(inv, L, f, K_in, dB, B_max);
         tmc.writeTwoMirrorConcentrator(outputDataPath);
+
+
+
+        // design
+        Design d;
+        d.addGeometry(&tmc);
+
+        // infinite source
+        LineSegment source(Type::SOURCE, float_vec(-1, -2), float_vec(-1, 2), K_in, K_in);
+        d.addGeometry(&source);
+
+        // trace extreme rays
+        d.traceExtremeInfiniteRays(outputDataPath, 50);
+
+        // flat target
+        LineSegment target(Type::TARGET, float_vec(0, -0.5), float_vec(0, 0.5), float_vec(1, 0), float_vec(1, 0));
+        d.addGeometry(&target);
+
+        // triangular target
+        // const float_vec tp1(1, 1), tp2(-2, 0), tp3(0, -1);
+        // const float_vec tt1(tp1 - tp2), tt2(tp2 - tp3), tt3(tp3 - tp1);
+        // const float_vec tn1(-tt1.y, tt1.x), tn2(-tt2.y, tt2.x), tn3(-tt3.y, tt3.x);
+        // LineSegment t1(Type::TARGET, tp1, tp2, tn1, tn1);
+        // LineSegment t2(Type::TARGET, tp2, tp3, tn2, tn2);
+        // LineSegment t3(Type::TARGET, tp3, tp1, tn3, tn3);
+        // d.addGeometry(&t1);
+        // d.addGeometry(&t2);
+        // d.addGeometry(&t3);
+
+        // trace mean rays
+        d.traceMeanRays(outputDataPath, 20);
 
     }
 
