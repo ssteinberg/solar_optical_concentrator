@@ -35,13 +35,13 @@ constexpr float_type EPSILON = 0.01;
 constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
 
 // choose systems to build
-constexpr bool BUILD_FINITE_SYSTEM = true;
+constexpr bool BUILD_FINITE_SYSTEM = false;
 constexpr bool BUILD_FINITE_ARBITRARY_SYSTEM = false;
 constexpr bool BUILD_INFINITE_SYSTEM = false;
-constexpr bool BUILD_INFINITE_ARBITRARY_SYSTEM = false;
+constexpr bool BUILD_INFINITE_ARBITRARY_SYSTEM = true;
 
 // choose source and target
-constexpr bool FLAT_SOURCE = false;
+constexpr bool FLAT_SOURCE = true;
 constexpr bool FLAT_TARGET = true;
 constexpr bool IGNORE_SOURCE = true;
 
