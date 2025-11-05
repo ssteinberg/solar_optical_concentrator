@@ -23,7 +23,10 @@ using namespace linalg::aliases;
 // floating-point precision
 using float_type = double;
 typedef linalg::vec<float_type, 2> float_vec;
-constexpr float_type A_LITTLE_BIT = 0.00001;
+
+// doinking intersection points
+constexpr bool DOINKING = true;
+constexpr float_type DOINK = 1e-15;
 
 // global constants
 constexpr float_type PI = 3.14159265358979;
@@ -34,13 +37,14 @@ constexpr float_type RAD_TO_DEG = 180 / PI;
 constexpr float_type EPSILON = 0.01;
 constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
 
-// choose systems to build
-constexpr bool BUILD_FINITE_SYSTEM = false;
-constexpr bool BUILD_FINITE_ARBITRARY_SYSTEM = false;
-constexpr bool BUILD_INFINITE_SYSTEM = false;
-constexpr bool BUILD_INFINITE_ARBITRARY_SYSTEM = true;
+// finite system
+constexpr bool BUILD_FINITE_SYSTEM = true;
 
-// choose source and target
+// infinite system
+constexpr bool BUILD_INFINITE_SYSTEM = false;
+constexpr bool BUILD_INFINITE_ARBITRARY_SYSTEM = false;
+
+// source and target
 constexpr bool FLAT_SOURCE = true;
 constexpr bool FLAT_TARGET = true;
 constexpr bool IGNORE_SOURCE = true;
@@ -69,6 +73,8 @@ namespace PCG32 {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
 
 // ray
 struct Ray {
@@ -133,9 +139,13 @@ struct HitInfo {
     Type t;
 };
 
+
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
 
 // geometry
 struct Geometry {
@@ -182,7 +192,7 @@ struct LineSegment : Geometry {
         const float_type s = PCG32::rand();
         const float_vec p = (1 - s) * p1 + s * p2;
         const float_vec n = (1 - s) * n1 + s * n2;
-        return Ray(p + A_LITTLE_BIT * n, n);
+        return Ray(p + (DOINKING ? DOINK * n : float_vec(0, 0)), n);
     }
 
     std::pair<Ray, float_type> sampleDiffuseRay() const override {
@@ -203,8 +213,8 @@ struct LineSegment : Geometry {
             const float_type sin0 = std::sin(theta);
             const float_vec p1RotDir(n1.x * cos0 - n1.y * sin0, n1.x * sin0 + n1.y * cos0);
             const float_vec p2RotDir(n2.x * cos0 - n2.y * sin0, n2.x * sin0 + n2.y * cos0);
-            p1ExtrRays.emplace_back(p1 + A_LITTLE_BIT * n1, p1RotDir);
-            p2ExtrRays.emplace_back(p2 + A_LITTLE_BIT * n2, p2RotDir);
+            p1ExtrRays.emplace_back(p1 + (DOINKING ? DOINK * n1 : float_vec(0, 0)), p1RotDir);
+            p2ExtrRays.emplace_back(p2 + (DOINKING ? DOINK * n2 : float_vec(0, 0)), p2RotDir);
         }
         return std::pair(p1ExtrRays, p2ExtrRays);
     }
@@ -220,8 +230,8 @@ struct LineSegment : Geometry {
             const float_type cosNeg(std::cos(-EPSILON_OVER_TWO)), sinNeg(std::sin(-EPSILON_OVER_TWO));
             const float_vec posRotDir(n.x * cosPos - n.y * sinPos, n.x * sinPos + n.y * cosPos);
             const float_vec negRotDir(n.x * cosNeg - n.y * sinNeg, n.x * sinNeg + n.y * cosNeg);
-            posExtrRays.emplace_back(p + A_LITTLE_BIT * n, posRotDir);
-            negExtrRays.emplace_back(p + A_LITTLE_BIT * n, negRotDir);
+            posExtrRays.emplace_back(p + (DOINKING ? DOINK * n : float_vec(0, 0)), posRotDir);
+            negExtrRays.emplace_back(p + (DOINKING ? DOINK * n : float_vec(0, 0)), negRotDir);
             l += inc;
         }
         return std::pair(posExtrRays, negExtrRays);
@@ -274,7 +284,7 @@ struct Circle : Geometry {
         const float_type theta = PCG32::rand() * 2 * PI;
         const float_vec p = c + r * float_vec(std::cos(theta), std::sin(theta));
         const float_vec n = (p - c) / r;
-        return Ray(p, n);
+        return Ray(p + (DOINKING ? DOINK * n : float_vec(0, 0)), n);
     }
 
     std::pair<Ray, float_type> sampleDiffuseRay() const override {
@@ -295,8 +305,8 @@ struct Circle : Geometry {
             const float_vec n = (p - c) / r;
             const float_vec p1RotDir(-n.y, n.x);
             const float_vec p2RotDir(n.y, -n.x);
-            p1ExtrRays.emplace_back(p, p1RotDir);
-            p2ExtrRays.emplace_back(p, p2RotDir);
+            p1ExtrRays.emplace_back(p + (DOINKING ? DOINK * n : float_vec(0, 0)), p1RotDir);
+            p2ExtrRays.emplace_back(p + (DOINKING ? DOINK * n : float_vec(0, 0)), p2RotDir);
         }
         return std::pair(p1ExtrRays, p2ExtrRays);
     }
@@ -307,9 +317,13 @@ struct Circle : Geometry {
 
 };
 
+
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
 
 // bounding box
 struct BoundingBox {
@@ -393,6 +407,8 @@ struct Tree {
     Tree(const std::vector<LineSegment>& v) { root = new Node(v, 0, static_cast<int>(v.size()) - 1); }
     bool intersect(const Ray& ray, HitInfo& hitInfo) const { if (root) return root->intersect(ray, hitInfo); return false; }
 };
+
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -857,7 +873,7 @@ struct Design {
                 path.addVertex(h.p);
                 if (h.t == Type::TARGET) break;
                 float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
-                r = Ray(h.p + A_LITTLE_BIT * refl, refl);
+                r = Ray(h.p + (DOINKING ? DOINK * refl : float_vec(0, 0)), refl);
             }
             else break;
         }
@@ -947,7 +963,7 @@ struct Design {
                         break;
                     }
                     float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
-                    r = Ray(h.p + A_LITTLE_BIT * refl, refl);
+                    r = Ray(h.p + (DOINKING ? DOINK * refl : float_vec(0, 0)), refl);
                 }
                 else break;
             }
@@ -983,7 +999,7 @@ struct Design {
                     //     break;
                     // }
                     float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
-                    r = Ray(h.p + A_LITTLE_BIT * refl, refl);
+                    r = Ray(h.p + (DOINKING ? DOINK * refl : float_vec(0, 0)), refl);
                 }
                 else break;
             }
@@ -1012,7 +1028,7 @@ struct Design {
                         break;
                     }
                     float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
-                    r = Ray(h.p + A_LITTLE_BIT * refl, refl);
+                    r = Ray(h.p + (DOINKING ? DOINK * refl : float_vec(0, 0)), refl);
                 }
                 else break;
             }
@@ -1057,8 +1073,8 @@ int main(int argc, char* argv[]) {
 
         // input
         const bool inv(true);
-        // const float_type f1(10), L(12), f2(6), da(0.000001), a_max(45 * DEG_TO_RAD), radius(f1 / 1000);
-        const float_type f1(6), L(12), f2(10), da(0.00001), a_max(135 * DEG_TO_RAD), radius(f2 / 1000 * ONE_OVER_PI);
+        const float_type f1(10), L(12), f2(6), da(0.000001), a_max(45 * DEG_TO_RAD), radius(f1 / 1000);
+        // const float_type f1(6), L(12), f2(10), da(0.00001), a_max(135 * DEG_TO_RAD), radius(f2 / 1000 * ONE_OVER_PI);
         file.open(outputDataPath + "input.csv");
         file << FLAT_SOURCE << "," << FLAT_TARGET << "," << inv << "," << radius << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "\n";
         file.close();
@@ -1131,13 +1147,6 @@ int main(int argc, char* argv[]) {
         // file.close();
 
         */
-
-    }
-
-
-
-    // finite system w/ arbitrary target
-    if (BUILD_FINITE_ARBITRARY_SYSTEM) {
 
     }
 
