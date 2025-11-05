@@ -33,8 +33,13 @@ constexpr float_type RAD_TO_DEG = 180 / PI;
 constexpr float_type EPSILON = 0.01;
 constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
 
-// switches
-constexpr bool FINITE_SYSTEM = false;
+// choose systems to build
+constexpr bool BUILD_FINITE_SYSTEM = false;
+constexpr bool BUILD_FINITE_ARBITRARY_SYSTEM = false;
+constexpr bool BUILD_INFINITE_SYSTEM = true;
+constexpr bool BUILD_INFINITE_ARBITRARY_SYSTEM = true;
+
+// choose source and target
 constexpr bool FLAT_SOURCE = true;
 constexpr bool FLAT_TARGET = true;
 constexpr bool IGNORE_SOURCE = true;
@@ -471,7 +476,7 @@ struct TwoMirrorConcentrator : Geometry {
         return m1a.getLength() + m1b.getLength() + m2a.getLength() + m2b.getLength();
     }
 
-    void buildFinite(const auto& Sa, const auto& SB, const float_type& f1, const float_type& L, const float_type& f2, const float_type& da, const float_type& a_max) {
+    void buildFin(const auto& Sa, const auto& SB, const float_type& f1, const float_type& L, const float_type& f2, const float_type& da, const float_type& a_max) {
 
         // reset
         reset();
@@ -539,7 +544,7 @@ struct TwoMirrorConcentrator : Geometry {
         buildBarrier();
     }
 
-    void buildInfinite(const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max) {
+    void buildInf(const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max) {
 
         // initial conditions
         float_vec p(-L, 0), pp(f, 0), n(1, 0), np(-1, 0);
@@ -558,8 +563,7 @@ struct TwoMirrorConcentrator : Geometry {
             const float_type d = R - 2 * (L + f);
 
             // (7)
-            const float_type I = 1;
-            const float_type S = 1;
+            const float_type I(1), S(FLAT_TARGET ? cosB : 1);
             const float_type dy = (inv ? -1 : 1) * S / I * dB;
             const float_type dx = dy * (p.y - r * sinB) / (r * (cosB - 1) + 2 * (L + f));
             const float_vec p_new(p.x + dx, p.y + dy);
@@ -580,7 +584,9 @@ struct TwoMirrorConcentrator : Geometry {
 
             // store coordinates and normals
             m1a.addSegment(p, p_new, n, n_new);
+            m1b.addSegment(float_vec(p.x, -p.y), float_vec(p_new.x, -p_new.y), float_vec(n.x, -n.y), float_vec(n_new.x, -n_new.y));
             m2a.addSegment(pp, pp_new, np, np_new);
+            m2b.addSegment(float_vec(pp.x, -pp.y), float_vec(pp_new.x, -pp_new.y), float_vec(np.x, -np.y), float_vec(np_new.x, -np_new.y));
 
             // update
             p = p_new;
@@ -591,24 +597,27 @@ struct TwoMirrorConcentrator : Geometry {
             r = r_new;
             B = B_new;
         }
+
+        // build barrier
+        buildBarrier();
     }
 
 
 
-    float_vec calcCone(const float_vec& apex, const std::vector<float_vec>& vertices) {
-        float_type a_max(0);
+    std::pair<float_type, float_vec> calcCone(const float_vec& apex, const std::vector<float_vec>& vertices) {
+        float_type sina_max(0);
         float_vec u(0, 0);
         for (const auto& v1 : vertices) {
             for (const auto& v2 : vertices) {
                 const float_vec l1(normalize(v1 - apex)), l2(normalize(v2 - apex));
-                const float_type a(std::abs(cross(l1, l2)));
-                if (a > a_max) {
-                    a_max = a;
+                const float_type sina(std::abs(cross(l1, l2)));
+                if (sina > sina_max) {
+                    sina_max = sina;
                     u = normalize(l1 + l2);
                 }
             }
         }
-        return u;
+        return std::pair(std::asin(sina_max), u);
     }
 
     bool traceRay(const Ray& r, HitInfo& h, Mirror& t) const {
@@ -624,16 +633,18 @@ struct TwoMirrorConcentrator : Geometry {
         return hit;
     }
 
-    void buildInfArbTarg(const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max) {
+    void buildInfArb(const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max) {
 
         // reset
         reset();
 
         // flat target
-        const float_vec tp1(0, -0.5), tp2(0, 0.5);
+        const float_vec tp1(0, -EPSILON_OVER_TWO), tp2(0, EPSILON_OVER_TWO);
         const float_vec tn(1, 0);
         Mirror t; t.addSegment(tp1, tp2, tn, tn);
         const std::vector<float_vec> tpts = {tp1, tp2};
+
+        /*
 
         // triangular target
         // const float_vec tp1(1, 1), tp2(-2, 0), tp3(0, -1);
@@ -645,17 +656,21 @@ struct TwoMirrorConcentrator : Geometry {
         // t.addSegment(tp3, tp1, tn3, tn3);
         // const std::vector<float_vec> tpts = {tp1, tp2, tp3};
 
+        */
+
         // initial conditions
         float_vec p1(-L, 0), p2(f, 0), n1(1, 0);
         float_type R(L + f), l(f);
 
         // calculate cone to initialize K_out and n2
-        float_vec K_out(calcCone(p2, tpts));
+        auto cone(calcCone(p2, tpts));
+        float_vec K_out(cone.second);
         float_vec n2(normalize(p2 - p1) - K_out);
 
         // trace ray to initialize r
         if (HitInfo h; traceRay(Ray(p2, K_out), h, t)) {
-            float_type r(h.l), F(2 * L + f + r);
+            float_type a(cone.first), r(h.l);
+            const float_type a_0(cone.first), F(2 * L + f + r);
 
             // numerical integration
             float_type B(0);
@@ -668,8 +683,8 @@ struct TwoMirrorConcentrator : Geometry {
                 const float_type sinB(std::sin(B)), cosB(std::cos(B));
 
                 // p1
-                const float_type I(1), S(1);
-                const float_type dy((inv ? -1 : 1) * S / I * dB); // also * const.
+                const float_type I(1), S(a);
+                const float_type dy((inv ? -1 : 1) * S / (I * a_0) * dB);
                 const float_type dx(dy * (p1.y - l * sinB) / (l * cosB - r + F));
                 const float_vec p1_new(p1.x + dx, p1.y + dy);
 
@@ -683,7 +698,9 @@ struct TwoMirrorConcentrator : Geometry {
                 float_vec K_int(p2_new - p1_new);
                 const float_type R_new(length(K_int));
                 K_int /= R_new;
-                K_out = calcCone(p2_new, tpts);
+                auto cone(calcCone(p2_new, tpts));
+                a = cone.first;
+                K_out = cone.second;
                 if (HitInfo hh; traceRay(Ray(p2, K_out), hh, t)) r = hh.l;
                 else std::cout << "error: no hit" << std::endl;
 
@@ -1020,15 +1037,15 @@ int main(int argc, char* argv[]) {
 
 
     // finite system
-    if (FINITE_SYSTEM) {
+    if (BUILD_FINITE_SYSTEM) {
 
         // output
-        std::string outputDataPath = "data_finite/";
+        std::string outputDataPath = "datafin/";
         if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
         std::ofstream file;
 
         // input
-        const float_type f1(10), L(50), f2(2), da(0.0001), a_max(75 * DEG_TO_RAD), radius(f1 / 1000);
+        const float_type f1(10), L(12), f2(6), da(0.000001), a_max(90 * DEG_TO_RAD), radius(f1 / 1000);
         file.open(outputDataPath + "input.csv");
         file << FLAT_SOURCE << "," << FLAT_TARGET << "," << radius << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "\n";
         file.close();
@@ -1051,7 +1068,7 @@ int main(int argc, char* argv[]) {
 
         // two-mirror concentrator
         TwoMirrorConcentrator tmc;
-        tmc.buildFinite(Sa, SB, f1, L, f2, da, a_max);
+        tmc.buildFin(Sa, SB, f1, L, f2, da, a_max);
         tmc.writeTwoMirrorConcentrator(outputDataPath);
 
 
@@ -1073,9 +1090,9 @@ int main(int argc, char* argv[]) {
         design.traceDiffuseRays(outputDataPath, 5);
 
         // phase space
-        design.tracePhaseSpace(outputDataPath, 10000);
+        // design.tracePhaseSpace(outputDataPath, 10000);
 
-
+        /*
 
         // hit report
         const int numberOfDesigns = 20;
@@ -1101,6 +1118,7 @@ int main(int argc, char* argv[]) {
         file.open(outputDataPath + "hitdata.csv");
         for (const auto& p : hitData) file << p.x << "," << p.y << "\n";
         file.close();
+
         // std::vector<std::pair<float_type, std::vector<float_type>>> hitData;
         // const int numberOfTrials = 3;
         // const int numberOfRays = 10000;
@@ -1109,32 +1127,39 @@ int main(int argc, char* argv[]) {
         // for (const auto& p : hitData) file << p.first << "," << p.second[0] << "," << p.second[1] << "," << p.second[2] << "," << p.second[3] << "\n";
         // file.close();
 
+        */
+
+    }
+
+
+
+    // finite system w/ arbitrary target
+    if (BUILD_FINITE_ARBITRARY_SYSTEM) {
+
     }
 
 
 
     // infinite system
-    if (!FINITE_SYSTEM) {
+    if (BUILD_INFINITE_SYSTEM) {
 
         // output
-        std::string outputDataPath = "data_infinite/";
+        std::string outputDataPath = "datainf/";
         if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
         std::ofstream file;
 
         // input
-        const bool inv(false);
-        const float_type L(3), f(0.5), dB(0.0001), B_max(80 * DEG_TO_RAD);
+        const bool inv(true);
+        const float_type L(3), f(0.5), dB(0.00001), B_max(85 * DEG_TO_RAD);
         const float_vec K_in(-1, 0);
         file.open(outputDataPath + "input.csv");
-        file << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
+        file << FLAT_TARGET << "," << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
         file.close();
 
         // two-mirror concentrator
         TwoMirrorConcentrator tmc;
-        tmc.buildInfArbTarg(inv, L, f, K_in, dB, B_max);
+        tmc.buildInf(inv, L, f, K_in, dB, B_max);
         tmc.writeTwoMirrorConcentrator(outputDataPath);
-
-
 
         // design
         Design d;
@@ -1148,8 +1173,49 @@ int main(int argc, char* argv[]) {
         d.traceExtremeInfiniteRays(outputDataPath, 50);
 
         // flat target
-        LineSegment target(Type::TARGET, float_vec(0, -0.5), float_vec(0, 0.5), float_vec(1, 0), float_vec(1, 0));
+        LineSegment target(Type::TARGET, float_vec(0, -EPSILON_OVER_TWO), float_vec(0, EPSILON_OVER_TWO), float_vec(1, 0), float_vec(1, 0));
         d.addGeometry(&target);
+    }
+
+
+
+    // infinite system w/ arbitrary target
+    if (BUILD_INFINITE_ARBITRARY_SYSTEM) {
+
+        // output
+        std::string outputDataPath = "datainfarb/";
+        if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
+        std::ofstream file;
+
+        // input
+        const bool inv(true);
+        const float_type L(3), f(0.5), dB(0.00001), B_max(85 * DEG_TO_RAD);
+        const float_vec K_in(-1, 0);
+        file.open(outputDataPath + "input.csv");
+        file << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
+        file.close();
+
+        // two-mirror concentrator
+        TwoMirrorConcentrator tmc;
+        tmc.buildInfArb(inv, L, f, K_in, dB, B_max);
+        tmc.writeTwoMirrorConcentrator(outputDataPath);
+
+        // design
+        Design d;
+        d.addGeometry(&tmc);
+
+        // infinite source
+        LineSegment source(Type::SOURCE, float_vec(-1, -2), float_vec(-1, 2), K_in, K_in);
+        d.addGeometry(&source);
+
+        // trace extreme rays
+        d.traceExtremeInfiniteRays(outputDataPath, 50);
+
+        // flat target
+        LineSegment target(Type::TARGET, float_vec(0, -EPSILON_OVER_TWO), float_vec(0, EPSILON_OVER_TWO), float_vec(1, 0), float_vec(1, 0));
+        d.addGeometry(&target);
+
+        /*
 
         // triangular target
         // const float_vec tp1(1, 1), tp2(-2, 0), tp3(0, -1);
@@ -1162,9 +1228,7 @@ int main(int argc, char* argv[]) {
         // d.addGeometry(&t2);
         // d.addGeometry(&t3);
 
-        // trace mean rays
-        d.traceMeanRays(outputDataPath, 20);
-
+        */
     }
 
 
