@@ -28,19 +28,20 @@ constexpr float_type A_LITTLE_BIT = 0.00001;
 // global constants
 constexpr float_type PI = 3.14159265358979;
 constexpr float_type PI_OVER_TWO = PI / 2;
+constexpr float_type ONE_OVER_PI = 1 / PI;
 constexpr float_type DEG_TO_RAD = PI / 180;
 constexpr float_type RAD_TO_DEG = 180 / PI;
 constexpr float_type EPSILON = 0.01;
 constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
 
 // choose systems to build
-constexpr bool BUILD_FINITE_SYSTEM = false;
+constexpr bool BUILD_FINITE_SYSTEM = true;
 constexpr bool BUILD_FINITE_ARBITRARY_SYSTEM = false;
-constexpr bool BUILD_INFINITE_SYSTEM = true;
-constexpr bool BUILD_INFINITE_ARBITRARY_SYSTEM = true;
+constexpr bool BUILD_INFINITE_SYSTEM = false;
+constexpr bool BUILD_INFINITE_ARBITRARY_SYSTEM = false;
 
 // choose source and target
-constexpr bool FLAT_SOURCE = true;
+constexpr bool FLAT_SOURCE = false;
 constexpr bool FLAT_TARGET = true;
 constexpr bool IGNORE_SOURCE = true;
 
@@ -476,12 +477,22 @@ struct TwoMirrorConcentrator : Geometry {
         return m1a.getLength() + m1b.getLength() + m2a.getLength() + m2b.getLength();
     }
 
-    void buildFin(const auto& Sa, const auto& SB, const float_type& f1, const float_type& L, const float_type& f2, const float_type& da, const float_type& a_max) {
+    void buildFin(const bool& inv, const float_type& f1, const float_type& L, const float_type& f2, const float_type& da, const float_type& a_max) {
 
         // reset
         reset();
 
         // initial conditions
+        const auto& Sa = [=](const float_type& alpha) {
+            if (FLAT_SOURCE) return std::cos(alpha);
+            else return float_type(1);
+        };
+        const auto& SB = [=](const float_type& beta) {
+            if (FLAT_SOURCE && FLAT_TARGET) return std::cos(beta);
+            if (FLAT_SOURCE && !FLAT_TARGET) return ONE_OVER_PI;
+            if (!FLAT_SOURCE && FLAT_TARGET) return PI * std::cos(beta);
+            return float_type(1);
+        };
         float_type a(0), B(0), r1(f1), r2(f2);
         float_vec p1(-f1 - L, 0), p2(f2, 0), n1(1, 0), n2(-1, 0);
         const float_type F(2 * f1 + L + 2 * f2);
@@ -502,7 +513,7 @@ struct TwoMirrorConcentrator : Geometry {
             const float_vec p1_new(-r1_new * std::cos(a_new) - L, r1_new * std::sin(a_new));
 
             // M2
-            const float_type dB = -Sa(a) * da / SB(B) * PI; // multiplied by pi and negated for inverted design
+            const float_type dB = (inv ? -1 : 1) * Sa(a) / SB(B) * da;
             const float_type B_new = B + dB;
             const float_type dr2 = (r1 * r2 * sinaB + L * r2 * sinB) / (r1 * cosaB + L * cosB - r1 + F) * dB;
             const float_type r2_new = r2 + dr2;
@@ -1045,33 +1056,25 @@ int main(int argc, char* argv[]) {
         std::ofstream file;
 
         // input
-        const float_type f1(10), L(12), f2(6), da(0.000001), a_max(90 * DEG_TO_RAD), radius(f1 / 1000);
+        const bool inv(true);
+        // const float_type f1(10), L(12), f2(6), da(0.000001), a_max(45 * DEG_TO_RAD), radius(f1 / 1000);
+        const float_type f1(6), L(12), f2(10), da(0.00001), a_max(135 * DEG_TO_RAD), radius(f2 / 1000 * ONE_OVER_PI);
         file.open(outputDataPath + "input.csv");
-        file << FLAT_SOURCE << "," << FLAT_TARGET << "," << radius << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "\n";
+        file << FLAT_SOURCE << "," << FLAT_TARGET << "," << inv << "," << radius << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "\n";
         file.close();
 
         // source
         LineSegment flatSource(Type::SOURCE, float_vec(-L, -radius), float_vec(-L, radius), float_vec(-1, 0), float_vec(-1, 0));
         Circle cylindricalSource(Type::SOURCE, float_vec(-L, 0), radius);
-        const auto& Sa = [=](const float_type& alpha) {
-            if (FLAT_SOURCE) return std::cos(alpha);
-            else return float_type(1);
-        };
 
         // target
         LineSegment flatTarget(Type::TARGET, float_vec(0, -radius), float_vec(0, radius), float_vec(1, 0), float_vec(1, 0));
         Circle cylindricalTarget(Type::TARGET, float_vec(0, 0), radius);
-        const auto& SB = [=](const float_type& beta) {
-            if (FLAT_TARGET) return std::cos(beta);
-            else return float_type(1);
-        };
 
         // two-mirror concentrator
         TwoMirrorConcentrator tmc;
-        tmc.buildFin(Sa, SB, f1, L, f2, da, a_max);
+        tmc.buildFin(inv, f1, L, f2, da, a_max);
         tmc.writeTwoMirrorConcentrator(outputDataPath);
-
-
 
         // design
         Design design;
@@ -1087,7 +1090,7 @@ int main(int argc, char* argv[]) {
         else design.addGeometry(&cylindricalTarget);
 
         // diffuse rays
-        design.traceDiffuseRays(outputDataPath, 5);
+        // design.traceDiffuseRays(outputDataPath, 5);
 
         // phase space
         // design.tracePhaseSpace(outputDataPath, 10000);
@@ -1150,7 +1153,7 @@ int main(int argc, char* argv[]) {
 
         // input
         const bool inv(true);
-        const float_type L(3), f(0.5), dB(0.00001), B_max(85 * DEG_TO_RAD);
+        const float_type L(3), f(0.5), dB(0.000001), B_max(85 * DEG_TO_RAD);
         const float_vec K_in(-1, 0);
         file.open(outputDataPath + "input.csv");
         file << FLAT_TARGET << "," << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
@@ -1166,7 +1169,8 @@ int main(int argc, char* argv[]) {
         d.addGeometry(&tmc);
 
         // infinite source
-        LineSegment source(Type::SOURCE, float_vec(-1, -2), float_vec(-1, 2), K_in, K_in);
+        LineSegment source(Type::SOURCE, float_vec(0, -2), float_vec(0, 2), K_in, K_in);
+        // LineSegment source(Type::SOURCE, float_vec(-1, -2), float_vec(-1, 2), K_in, K_in);
         d.addGeometry(&source);
 
         // trace extreme rays
@@ -1189,7 +1193,7 @@ int main(int argc, char* argv[]) {
 
         // input
         const bool inv(true);
-        const float_type L(3), f(0.5), dB(0.00001), B_max(85 * DEG_TO_RAD);
+        const float_type L(3), f(0.5), dB(0.000001), B_max(85 * DEG_TO_RAD);
         const float_vec K_in(-1, 0);
         file.open(outputDataPath + "input.csv");
         file << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
@@ -1205,7 +1209,8 @@ int main(int argc, char* argv[]) {
         d.addGeometry(&tmc);
 
         // infinite source
-        LineSegment source(Type::SOURCE, float_vec(-1, -2), float_vec(-1, 2), K_in, K_in);
+        LineSegment source(Type::SOURCE, float_vec(0, -2), float_vec(0, 2), K_in, K_in);
+        // LineSegment source(Type::SOURCE, float_vec(-1, -2), float_vec(-1, 2), K_in, K_in);
         d.addGeometry(&source);
 
         // trace extreme rays
