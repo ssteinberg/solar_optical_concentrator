@@ -26,7 +26,7 @@ typedef linalg::vec<float_type, 2> float_vec;
 
 // doinking intersection points
 constexpr bool DOINKING = true;
-constexpr float_type DOINK = 1e-15;
+constexpr float_type DOINK = 1e-6;
 
 // global constants
 constexpr float_type PI = 3.14159265358979;
@@ -137,6 +137,7 @@ struct HitInfo {
     float_type l;
     float_vec p, n;
     Type t;
+    float_type ml;
 };
 
 
@@ -152,6 +153,7 @@ struct Geometry {
     Shape shape;
     Type type;
     Geometry(const Shape& s, const Type& t) : shape(s), type(t) {}
+    virtual float_vec getCentre() const = 0;
     virtual float_type getLength() const = 0;
     virtual bool intersect(const Ray& ray, HitInfo& hitInfo) const = 0;
     virtual Ray sampleMeanRay() const = 0;
@@ -166,6 +168,8 @@ struct LineSegment : Geometry {
     float_vec p1, p2, n1, n2;
 
     LineSegment(const Type& t, const float_vec& p1, const float_vec& p2, const float_vec& n1, const float_vec& n2) : Geometry(Shape::FLAT, t), p1(p1), p2(p2), n1(n1), n2(n2) {}
+
+    float_vec getCentre() const override { return (p1 + p2) / 2; }
 
     float_type getLength() const override { return length(p1 - p2); }
 
@@ -250,6 +254,8 @@ struct Circle : Geometry {
     float_type r;
 
     Circle(const Type& t, const float_vec& c, const float_type& r) : Geometry(Shape::CYLINDRICAL, t), c(c), r(r) {}
+
+    float_vec getCentre() const override { return c; }
 
     float_type getLength() const override { return PI * 2 * r; }
 
@@ -426,6 +432,8 @@ struct Mirror : Geometry {
 
     void reset() { segments.clear(); }
 
+    float_vec getCentre() const override { return float_vec(0, 0); }
+
     float_type getLength() const override {
         float_type l(0);
         for (const auto& s : segments) l += s.getLength();
@@ -441,8 +449,13 @@ struct Mirror : Geometry {
     }
 
     bool intersect(const Ray& ray, HitInfo& hitInfo) const override {
+        float_type length = 0;
         for (auto s : segments) {
-            if (s.intersect(ray, hitInfo)) return true;
+            length += s.getLength();
+            if (s.intersect(ray, hitInfo)) {
+                hitInfo.ml = length;
+                return true;
+            }
         }
         return false;
         // return tree.intersect(ray, hitInfo);
@@ -488,6 +501,8 @@ struct TwoMirrorConcentrator : Geometry {
         m2b.reset();
         barrier.reset();
     }
+
+    float_vec getCentre() const override { return float_vec(0, 0); }
 
     float_type getLength() const override {
         return m1a.getLength() + m1b.getLength() + m2a.getLength() + m2b.getLength();
@@ -936,47 +951,92 @@ struct Design {
         file.close();
     }
 
+
+
     void tracePhaseSpace(const std::string& filePath, const int& numRays) const {
-        std::vector<std::vector<std::vector<float_type>>> threadVectors(omp_get_max_threads());
+
+        std::vector<std::vector<std::vector<float_type>>> threadVectorsTarget(omp_get_max_threads());
+        std::vector<std::vector<std::vector<float_type>>> threadVectorsMirror1(omp_get_max_threads());
+        std::vector<std::vector<std::vector<float_type>>> threadVectorsMirror2(omp_get_max_threads());
         #pragma omp parallel for schedule(dynamic, 1)
         for (int i = 0; i < numRays; ++i) {
             int threadID = omp_get_thread_num();
             auto sample = source->sampleDiffuseRay();
             Ray r = sample.first;
-            const float_type gamma = sample.second;
+            const float_type source_angle(sample.second);
+            const float_vec source_pos(r.o - source->getCentre());
+
+            // for 3 path segments
             for (int j = 0; j < 3; ++j) {
+
+                // check intersection
                 if (HitInfo h; intersect(r, h)) {
+
+                    // mirror 1
                     if (j == 0 && h.t != Type::MIRROR_1a && h.t != Type::MIRROR_1b) break;
+                    if (j == 0 && (h.t == Type::MIRROR_1a || h.t == Type::MIRROR_1b)) {
+                        std::vector<float_type> temp = {cross(-r.d, h.n), h.ml, source_angle, std::abs(source_pos.y)};
+                        threadVectorsMirror1[threadID].emplace_back(std::move(temp));
+                    }
+
+                    // mirror 2
                     if (j == 1 && h.t != Type::MIRROR_2a && h.t != Type::MIRROR_2b) break;
+                    if (j == 1 && (h.t == Type::MIRROR_2a || h.t == Type::MIRROR_2b)) {
+                        std::vector<float_type> temp = {cross(-r.d, h.n), h.ml, source_angle, std::abs(source_pos.y)};
+                        threadVectorsMirror2[threadID].emplace_back(std::move(temp));
+                    }
+
+                    // target
                     if (j == 2 && h.t != Type::TARGET) break;
                     if (j == 2 && h.t == Type::TARGET) {
                         if (target->shape == Shape::FLAT) {
-                            std::vector<float_type> temp = {cross(-r.d, h.n), h.p.y, gamma};
-                            threadVectors[threadID].emplace_back(std::move(temp));
+                            std::vector<float_type> temp = {cross(-r.d, h.n), h.p.y, source_angle, std::abs(source_pos.y)};
+                            threadVectorsTarget[threadID].emplace_back(std::move(temp));
                         }
                         else if (target->shape == Shape::CYLINDRICAL) {
-                            float_type theta = std::atan2(h.p.y, h.p.x);
-                            if (theta < 0) theta += 2 * PI;
-                            std::vector<float_type> temp = {cross(-r.d, h.n), theta * RAD_TO_DEG, gamma};
-                            threadVectors[threadID].emplace_back(std::move(temp));
+                            float_type source_theta = std::atan2(source_pos.y, -source_pos.x);
+                            if (source_theta < 0) source_theta += 2 * PI;
+                            float_type target_theta = std::atan2(h.p.y, h.p.x);
+                            if (target_theta < 0) target_theta += 2 * PI;
+                            std::vector<float_type> temp = {cross(-r.d, h.n), target_theta * RAD_TO_DEG, source_angle, source_theta * RAD_TO_DEG};
+                            threadVectorsTarget[threadID].emplace_back(std::move(temp));
                         }
                         break;
                     }
+
+                    // reflect
                     float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
                     r = Ray(h.p + (DOINKING ? DOINK * refl : float_vec(0, 0)), refl);
                 }
                 else break;
             }
         }
-        std::vector<std::vector<float_type>> data;
-        for (const auto& v : threadVectors) {
-            data.insert(data.end(), v.begin(), v.end());
-        }
+
         std::ofstream file;
-        file.open(filePath + "phase.csv");
-        for (const auto& p : data) file << p[0] << "," << p[1] << "," << p[2] << "\n";
+
+        // target
+        std::vector<std::vector<float_type>> dataTarget;
+        for (const auto& v : threadVectorsTarget) dataTarget.insert(dataTarget.end(), v.begin(), v.end());
+        file.open(filePath + "phasetarget.csv");
+        for (const auto& p : dataTarget) file << p[0] << "," << p[1] << "," << p[2] << "," << p[3] << "\n";
+        file.close();
+
+        // mirror 1
+        std::vector<std::vector<float_type>> dataMirror1;
+        for (const auto& v : threadVectorsMirror1) dataMirror1.insert(dataMirror1.end(), v.begin(), v.end());
+        file.open(filePath + "phasemirror1.csv");
+        for (const auto& p : dataMirror1) file << p[0] << "," << p[1] << "," << p[2] << "," << p[3] << "\n";
+        file.close();
+
+        // mirror 2
+        std::vector<std::vector<float_type>> dataMirror2;
+        for (const auto& v : threadVectorsMirror2) dataMirror2.insert(dataMirror2.end(), v.begin(), v.end());
+        file.open(filePath + "phasemirror2.csv");
+        for (const auto& p : dataMirror2) file << p[0] << "," << p[1] << "," << p[2] << "," << p[3] << "\n";
         file.close();
     }
+
+
 
     float_type traceHitData(const int& numRays) const {
         std::vector<int> threadCounts(omp_get_max_threads());
@@ -1072,9 +1132,8 @@ int main(int argc, char* argv[]) {
         std::ofstream file;
 
         // input
-        const bool inv(true);
-        const float_type f1(10), L(12), f2(6), da(0.000001), a_max(45 * DEG_TO_RAD), radius(f1 / 1000);
-        // const float_type f1(6), L(12), f2(10), da(0.00001), a_max(135 * DEG_TO_RAD), radius(f2 / 1000 * ONE_OVER_PI);
+        const bool inv(false);
+        const float_type f1(1), L(4), f2(1), da(0.0001), a_max(90 * DEG_TO_RAD), radius(f1 / 10);
         file.open(outputDataPath + "input.csv");
         file << FLAT_SOURCE << "," << FLAT_TARGET << "," << inv << "," << radius << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "\n";
         file.close();
@@ -1105,11 +1164,8 @@ int main(int argc, char* argv[]) {
         if (FLAT_TARGET) design.addGeometry(&flatTarget);
         else design.addGeometry(&cylindricalTarget);
 
-        // diffuse rays
-        // design.traceDiffuseRays(outputDataPath, 5);
-
         // phase space
-        // design.tracePhaseSpace(outputDataPath, 10000);
+        design.tracePhaseSpace(outputDataPath, 10000);
 
         /*
 
