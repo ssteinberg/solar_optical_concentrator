@@ -38,11 +38,11 @@ constexpr float_type EPSILON = 0.01;
 constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
 
 // finite system
-constexpr bool BUILD_FINITE_SYSTEM = true;
+constexpr bool BUILD_FINITE_SYSTEM = false;
 
 // infinite system
 constexpr bool BUILD_INFINITE_SYSTEM = false;
-constexpr bool BUILD_INFINITE_ARBITRARY_SYSTEM = false;
+constexpr bool BUILD_INFINITE_ARBITRARY_SYSTEM = true;
 
 // source and target
 constexpr bool FLAT_SOURCE = true;
@@ -134,10 +134,20 @@ enum struct Type {
 
 // hit info
 struct HitInfo {
+
+    // regular stuff
     float_type l;
     float_vec p, n;
     Type t;
+
+    // length up mirror
     float_type ml;
+
+    // arbitrary target
+    float_vec u;
+    float_type rtraced, rmin, rmax, rmean;
+    float_type a, sina, tana;
+
 };
 
 
@@ -243,6 +253,66 @@ struct LineSegment : Geometry {
 
     void writeLineSegment(std::ofstream& file) const {
         file << p1.x << "," << p1.y << "," << p2.x << "," << p2.y << "\n";
+    }
+
+};
+
+// polygon
+struct Polygon : Geometry {
+
+    std::vector<float_vec> vertices;
+    std::vector<LineSegment> segments;
+
+    Polygon(const Type& type, const std::vector<float_vec>& vertices) : Geometry(Shape::CONSTRUCTED, type), vertices(vertices) {
+        const int numVertices(static_cast<int>(vertices.size()));
+        if (numVertices < 2) std::cout << "Not a polygon." << std::endl;
+        for (int i = 0; i < numVertices - 1; ++i) {
+            const float_vec p1(vertices[i]), p2(vertices[i + 1]);
+            const float_vec l(normalize(p2 - p1)), n(l.y, -l.x);
+            segments.emplace_back(type, p1, p2, n, n);
+        }
+        if (numVertices > 2) {
+            const float_vec p1(vertices.back()), p2(vertices.front());
+            const float_vec l(normalize(p2 - p1)), n(l.y, -l.x);
+            segments.emplace_back(type, p1, p2, n, n);
+        }
+    }
+
+    float_vec getCentre() const override {
+        float_vec sum(0, 0);
+        for (const auto& s : segments) sum += s.p1;
+        return sum / static_cast<int>(segments.size());
+    }
+
+    float_type getLength() const override {
+        float_type l(0);
+        for (const auto& s : segments) l += s.getLength();
+        return l;
+    }
+
+    bool intersect(const Ray& ray, HitInfo& hitInfo) const override {
+        for (auto s : segments) if (s.intersect(ray, hitInfo)) return true;
+        return false;
+    }
+
+    Ray sampleMeanRay() const override {
+        return segments[PCG32::rand() * segments.size()].sampleMeanRay();
+    }
+
+    std::pair<Ray, float_type> sampleDiffuseRay() const override {
+        return segments[PCG32::rand() * segments.size()].sampleDiffuseRay();
+    }
+
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeDiffuseRays() const override {
+        return std::pair(std::vector<Ray>(), std::vector<Ray>());
+    }
+
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeInfiniteRays(const int& numRays) const override {
+        return std::pair(std::vector<Ray>(), std::vector<Ray>());
+    }
+
+    void writePolygon(std::ofstream& file) const {
+        for (auto s : segments) s.writeLineSegment(file);
     }
 
 };
@@ -502,7 +572,9 @@ struct TwoMirrorConcentrator : Geometry {
         barrier.reset();
     }
 
-    float_vec getCentre() const override { return float_vec(0, 0); }
+    float_vec getCentre() const override {
+        return float_vec(0, 0);
+    }
 
     float_type getLength() const override {
         return m1a.getLength() + m1b.getLength() + m2a.getLength() + m2b.getLength();
@@ -646,11 +718,13 @@ struct TwoMirrorConcentrator : Geometry {
 
 
 
-    std::pair<float_type, float_vec> calcCone(const float_vec& apex, const std::vector<float_vec>& vertices) {
+    bool calcCone(const Polygon& p, const float_vec& apex, HitInfo& h) {
+
+        // find u
         float_type sina_max(0);
         float_vec u(0, 0);
-        for (const auto& v1 : vertices) {
-            for (const auto& v2 : vertices) {
+        for (const auto& v1 : p.vertices) {
+            for (const auto& v2 : p.vertices) {
                 const float_vec l1(normalize(v1 - apex)), l2(normalize(v2 - apex));
                 const float_type sina(std::abs(cross(l1, l2)));
                 if (sina > sina_max) {
@@ -659,60 +733,55 @@ struct TwoMirrorConcentrator : Geometry {
                 }
             }
         }
-        return std::pair(std::asin(sina_max), u);
-    }
 
-    bool traceRay(const Ray& r, HitInfo& h, Mirror& t) const {
+        // find rtraced
         bool hit = false;
         HitInfo temp;
         h.l = std::numeric_limits<float_type>::max();
-        if(t.intersect(r, temp)) {
+        if(p.intersect(Ray(apex, u), temp)) {
             if (temp.l < h.l) {
                 hit = true;
                 h = temp;
             }
         }
-        return hit;
+        if (hit) h.rtraced = h.l;
+        else return false;
+
+        // find rmin, rmax, rmean
+        float_type rmin(std::numeric_limits<float_type>::max()), rmax(std::numeric_limits<float_type>::min());
+        for (const auto& v : p.vertices) {
+            const float_type proj(dot(v - apex, u));
+            if (proj > rmax) rmax = proj;
+            if (proj < rmin) rmin = proj;
+        }
+        h.rmin = rmin;
+        h.rmax = rmax;
+        h.rmean = 0.5 * (rmax + rmin);
+
+        // return
+        h.u = u;
+        h.a = std::asin(sina_max);
+        h.sina = sina_max;
+        h.tana = 2 * std::tan(h.a / 2);
+        return true;
     }
 
-    void buildInfArb(const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max) {
+
+
+    void buildInfArb(const Polygon& p, const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max) {
 
         // reset
         reset();
-
-        // flat target
-        const float_vec tp1(0, -EPSILON_OVER_TWO), tp2(0, EPSILON_OVER_TWO);
-        const float_vec tn(1, 0);
-        Mirror t; t.addSegment(tp1, tp2, tn, tn);
-        const std::vector<float_vec> tpts = {tp1, tp2};
-
-        /*
-
-        // triangular target
-        // const float_vec tp1(1, 1), tp2(-2, 0), tp3(0, -1);
-        // const float_vec tt1(tp1 - tp2), tt2(tp2 - tp3), tt3(tp3 - tp1);
-        // const float_vec tn1(-tt1.y, tt1.x), tn2(-tt2.y, tt2.x), tn3(-tt3.y, tt3.x);
-        // Mirror t;
-        // t.addSegment(tp1, tp2, tn1, tn1);
-        // t.addSegment(tp2, tp3, tn2, tn2);
-        // t.addSegment(tp3, tp1, tn3, tn3);
-        // const std::vector<float_vec> tpts = {tp1, tp2, tp3};
-
-        */
 
         // initial conditions
         float_vec p1(-L, 0), p2(f, 0), n1(1, 0);
         float_type R(L + f), l(f);
 
-        // calculate cone to initialize K_out and n2
-        auto cone(calcCone(p2, tpts));
-        float_vec K_out(cone.second);
-        float_vec n2(normalize(p2 - p1) - K_out);
-
-        // trace ray to initialize r
-        if (HitInfo h; traceRay(Ray(p2, K_out), h, t)) {
-            float_type a(cone.first), r(h.l);
-            const float_type a_0(cone.first), F(2 * L + f + r);
+        // calculate cone to initialize
+        if (HitInfo h; calcCone(p, p2, h)) {
+            float_vec K_out(h.u), n2(K_out - normalize(p2 - p1));
+            float_type a(h.a), r(h.l);
+            const float_type a_0(h.a), F(2 * L + f + r);
 
             // numerical integration
             float_type B(0);
@@ -740,11 +809,8 @@ struct TwoMirrorConcentrator : Geometry {
                 float_vec K_int(p2_new - p1_new);
                 const float_type R_new(length(K_int));
                 K_int /= R_new;
-                auto cone(calcCone(p2_new, tpts));
-                a = cone.first;
-                K_out = cone.second;
-                if (HitInfo hh; traceRay(Ray(p2, K_out), hh, t)) r = hh.l;
-                else std::cout << "error: no hit" << std::endl;
+                if (HitInfo hh; calcCone(p, p2, hh)) { r = hh.l; a = hh.a; K_out = hh.u; }
+                else { std::cout << "ERROR: No hit, breaking loop." << std::endl; break; }
 
                 // normals
                 const float_vec n1_new(normalize(K_int - K_in));
@@ -951,8 +1017,6 @@ struct Design {
         file.close();
     }
 
-
-
     void tracePhaseSpace(const std::string& filePath, const int& numRays) const {
 
         std::vector<std::vector<std::vector<float_type>>> threadVectorsTarget(omp_get_max_threads());
@@ -1035,8 +1099,6 @@ struct Design {
         for (const auto& p : dataMirror2) file << p[0] << "," << p[1] << "," << p[2] << "," << p[3] << "\n";
         file.close();
     }
-
-
 
     float_type traceHitData(const int& numRays) const {
         std::vector<int> threadCounts(omp_get_max_threads());
@@ -1133,7 +1195,7 @@ int main(int argc, char* argv[]) {
 
         // input
         const bool inv(false);
-        const float_type f1(1), L(4), f2(1), da(0.0001), a_max(90 * DEG_TO_RAD), radius(f1 / 10);
+        const float_type f1(1), L(1000), f2(1), da(0.000001), a_max(179 * DEG_TO_RAD), radius(f1 / 1000);
         file.open(outputDataPath + "input.csv");
         file << FLAT_SOURCE << "," << FLAT_TARGET << "," << inv << "," << radius << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "\n";
         file.close();
@@ -1165,7 +1227,7 @@ int main(int argc, char* argv[]) {
         else design.addGeometry(&cylindricalTarget);
 
         // phase space
-        design.tracePhaseSpace(outputDataPath, 10000);
+        // design.tracePhaseSpace(outputDataPath, 10000);
 
         /*
 
@@ -1264,41 +1326,26 @@ int main(int argc, char* argv[]) {
         file << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
         file.close();
 
+        // infinite source
+        LineSegment source(Type::SOURCE, float_vec(0, -2), float_vec(0, 2), K_in, K_in);
+
+        // target
+        const std::vector<float_vec> targetVertices = {float_vec(0, -EPSILON_OVER_TWO), float_vec(0, EPSILON_OVER_TWO)}; // ideal
+        // const std::vector<float_vec> targetVertices = {float_vec(1, 1), float_vec(-2, 0), float_vec(0, -1)}; // triangle
+        const Polygon target(Type::TARGET, targetVertices);
+
         // two-mirror concentrator
         TwoMirrorConcentrator tmc;
-        tmc.buildInfArb(inv, L, f, K_in, dB, B_max);
+        tmc.buildInfArb(target, inv, L, f, K_in, dB, B_max);
         tmc.writeTwoMirrorConcentrator(outputDataPath);
 
         // design
         Design d;
         d.addGeometry(&tmc);
-
-        // infinite source
-        LineSegment source(Type::SOURCE, float_vec(0, -2), float_vec(0, 2), K_in, K_in);
-        // LineSegment source(Type::SOURCE, float_vec(-1, -2), float_vec(-1, 2), K_in, K_in);
         d.addGeometry(&source);
 
         // trace extreme rays
         d.traceExtremeInfiniteRays(outputDataPath, 50);
-
-        // flat target
-        LineSegment target(Type::TARGET, float_vec(0, -EPSILON_OVER_TWO), float_vec(0, EPSILON_OVER_TWO), float_vec(1, 0), float_vec(1, 0));
-        d.addGeometry(&target);
-
-        /*
-
-        // triangular target
-        // const float_vec tp1(1, 1), tp2(-2, 0), tp3(0, -1);
-        // const float_vec tt1(tp1 - tp2), tt2(tp2 - tp3), tt3(tp3 - tp1);
-        // const float_vec tn1(-tt1.y, tt1.x), tn2(-tt2.y, tt2.x), tn3(-tt3.y, tt3.x);
-        // LineSegment t1(Type::TARGET, tp1, tp2, tn1, tn1);
-        // LineSegment t2(Type::TARGET, tp2, tp3, tn2, tn2);
-        // LineSegment t3(Type::TARGET, tp3, tp1, tn3, tn3);
-        // d.addGeometry(&t1);
-        // d.addGeometry(&t2);
-        // d.addGeometry(&t3);
-
-        */
     }
 
 
@@ -1690,5 +1737,29 @@ auto phaseSpaceData = design.tracePhaseSpace(10000);
 file.open(outputDataPath + "phase.csv");
 for (auto data : phaseSpaceData) file << data[0] << "," << data[1] << "," << data[2] << "\n";
 file.close();
+
+*/
+
+/*
+
+// flat target
+const LineSegment target(Type::TARGET, float_vec(0, -EPSILON_OVER_TWO), float_vec(0, EPSILON_OVER_TWO), float_vec(1, 0), float_vec(1, 0));
+
+// flat target
+const float_vec tp1(0, -EPSILON_OVER_TWO), tp2(0, EPSILON_OVER_TWO);
+const float_vec tn(1, 0);
+Mirror t; t.addSegment(tp1, tp2, tn, tn);
+const std::vector<float_vec> tpts = {tp1, tp2};
+
+// triangular target
+// const float_vec tp1(1, 1), tp2(-2, 0), tp3(0, -1);
+// const float_vec tt1(tp1 - tp2), tt2(tp2 - tp3), tt3(tp3 - tp1);
+// const float_vec tn1(-tt1.y, tt1.x), tn2(-tt2.y, tt2.x), tn3(-tt3.y, tt3.x);
+// LineSegment t1(Type::TARGET, tp1, tp2, tn1, tn1);
+// LineSegment t2(Type::TARGET, tp2, tp3, tn2, tn2);
+// LineSegment t3(Type::TARGET, tp3, tp1, tn3, tn3);
+// d.addGeometry(&t1);
+// d.addGeometry(&t2);
+// d.addGeometry(&t3);
 
 */
