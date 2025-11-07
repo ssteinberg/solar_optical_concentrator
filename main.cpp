@@ -41,7 +41,7 @@ constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
 constexpr bool BUILD_FINITE_SYSTEM = false;
 
 // infinite system
-constexpr bool BUILD_INFINITE_SYSTEM = false;
+constexpr bool BUILD_INFINITE_SYSTEM = true;
 constexpr bool BUILD_INFINITE_ARBITRARY_SYSTEM = true;
 
 // source and target
@@ -766,9 +766,7 @@ struct TwoMirrorConcentrator : Geometry {
         return true;
     }
 
-
-
-    void buildInfArb(const Polygon& p, const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max) {
+    void buildInfArb(const Polygon& p, const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max, const int& i, const int& j) {
 
         // reset
         reset();
@@ -780,8 +778,19 @@ struct TwoMirrorConcentrator : Geometry {
         // calculate cone to initialize
         if (HitInfo h; calcCone(p, p2, h)) {
             float_vec K_out(h.u), n2(K_out - normalize(p2 - p1));
-            float_type a(h.a), r(h.l);
-            const float_type a_0(h.a), F(2 * L + f + r);
+
+            float_type r_0, r, a_0, a;
+
+            if (i == 0) r_0 = r = h.rtraced;
+            else if (i == 1) r_0 = r = h.rmin;
+            else if (i == 2) r_0 = r = h.rmax;
+            else r_0 = r = h.rmean;
+
+            if (j == 0) a_0 = a = h.a;
+            else if (j == 1) a_0 = a = h.sina;
+            else a_0 = a = r * h.tana;
+
+            const float_type F(2 * L + f + r_0);
 
             // numerical integration
             float_type B(0);
@@ -809,8 +818,23 @@ struct TwoMirrorConcentrator : Geometry {
                 float_vec K_int(p2_new - p1_new);
                 const float_type R_new(length(K_int));
                 K_int /= R_new;
-                if (HitInfo hh; calcCone(p, p2, hh)) { r = hh.l; a = hh.a; K_out = hh.u; }
-                else { std::cout << "ERROR: No hit, breaking loop." << std::endl; break; }
+                if (HitInfo hh; calcCone(p, p2, hh)) {
+                    K_out = hh.u;
+
+                    if (i == 0) r = hh.rtraced;
+                    else if (i == 1) r = hh.rmin;
+                    else if (i == 2) r = hh.rmax;
+                    else r = hh.rmean;
+
+                    if (j == 0) a = hh.a;
+                    else if (j == 1) a = hh.sina;
+                    else a = r * hh.tana;
+                    
+                }
+                else {
+                    std::cout << "ERROR: No hit, breaking loop." << std::endl;
+                    break;
+                }
 
                 // normals
                 const float_vec n1_new(normalize(K_int - K_in));
@@ -1280,7 +1304,7 @@ int main(int argc, char* argv[]) {
 
         // input
         const bool inv(true);
-        const float_type L(3), f(0.5), dB(0.000001), B_max(85 * DEG_TO_RAD);
+        const float_type L(3), f(0.5), dB(0.00001), B_max(85 * DEG_TO_RAD);
         const float_vec K_in(-1, 0);
         file.open(outputDataPath + "input.csv");
         file << FLAT_TARGET << "," << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
@@ -1320,7 +1344,7 @@ int main(int argc, char* argv[]) {
 
         // input
         const bool inv(true);
-        const float_type L(3), f(0.5), dB(0.000001), B_max(85 * DEG_TO_RAD);
+        const float_type L(3), f(0.5), dB(0.00001), B_max(85 * DEG_TO_RAD);
         const float_vec K_in(-1, 0);
         file.open(outputDataPath + "input.csv");
         file << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
@@ -1336,7 +1360,7 @@ int main(int argc, char* argv[]) {
 
         // two-mirror concentrator
         TwoMirrorConcentrator tmc;
-        tmc.buildInfArb(target, inv, L, f, K_in, dB, B_max);
+        tmc.buildInfArb(target, inv, L, f, K_in, dB, B_max, 0, 0);
         tmc.writeTwoMirrorConcentrator(outputDataPath);
 
         // design
