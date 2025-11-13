@@ -34,15 +34,16 @@ constexpr float_type PI_OVER_TWO = PI / 2;
 constexpr float_type ONE_OVER_PI = 1 / PI;
 constexpr float_type DEG_TO_RAD = PI / 180;
 constexpr float_type RAD_TO_DEG = 180 / PI;
-constexpr float_type EPSILON = 0.01;
+constexpr float_type EPSILON = 0.05;
 constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
 
 // finite system
 constexpr bool BUILD_FINITE_SYSTEM = false;
+constexpr bool BUILD_FINITE_ELLIPSE_SYSTEM = true;
 
 // infinite system
-constexpr bool BUILD_INFINITE_SYSTEM = true;
-constexpr bool BUILD_INFINITE_ARBITRARY_SYSTEM = true;
+constexpr bool BUILD_INFINITE_SYSTEM = false;
+constexpr bool BUILD_INFINITE_ARBITRARY_SYSTEM = false;
 
 // source and target
 constexpr bool FLAT_SOURCE = true;
@@ -117,6 +118,7 @@ struct Path {
 enum struct Shape {
     FLAT,
     CYLINDRICAL,
+    ELLIPTICAL,
     CONSTRUCTED
 };
 
@@ -146,6 +148,7 @@ struct HitInfo {
     // arbitrary target
     float_vec u;
     float_type rtraced, rmin, rmax, rmean;
+    float_type rmin2, rmax2, rmean2;
     float_type a, sina, tana;
 
 };
@@ -320,13 +323,9 @@ struct Polygon : Geometry {
 // circle
 struct Circle : Geometry {
 
-    float_vec c;
-    float_type r;
-
+    float_vec c; float_type r;
     Circle(const Type& t, const float_vec& c, const float_type& r) : Geometry(Shape::CYLINDRICAL, t), c(c), r(r) {}
-
     float_vec getCentre() const override { return c; }
-
     float_type getLength() const override { return PI * 2 * r; }
 
     bool intersect(const Ray& ray, HitInfo& hitInfo) const override {
@@ -389,6 +388,68 @@ struct Circle : Geometry {
 
     std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeInfiniteRays(const int& numRays) const override {
         return std::pair(std::vector<Ray>(), std::vector<Ray>());
+    }
+
+};
+
+// ellipse
+struct Ellipse : Geometry {
+
+    float_type L, f1;
+    Ellipse(const Type& t, const float_type& L, const float_type& f1) : Geometry(Shape::ELLIPTICAL, t), L(L), f1(f1) {}
+    float_vec getCentre() const override { return float_vec(-L / 2, 0); }
+    float_type getLength() const override { return float_type(0); }
+
+    bool intersect(const Ray& ray, HitInfo& hitInfo) const override {
+        if (IGNORE_SOURCE && type == Type::SOURCE) return false;
+        else {
+
+            // incoming ray
+            const float_type ox = ray.o.x;
+            const float_type oy = ray.o.y;
+            const float_type dx = ray.d.x;
+            const float_type dy = ray.d.y;
+
+            // intermediate
+            const float_type a = L * L / 4 + L * f1 + f1 * f1;
+            const float_type b = 2 * L * f1 * ox * dx + L * L * f1 * dx + 2 * f1 * f1 * ox * dx + L * f1 * f1 * dx;
+            const float_type c = L * f1 * ox * ox + L * L * f1 * ox + L * L * L * f1 / 4 + f1 * f1 * ox * ox + L * f1 * f1 * ox + L * L * f1 * f1 / 4;
+
+            // polynomial of s
+            const float_type s_a = dy * dy * a + L * f1 * dx * dx + f1 * f1 * dx * dx;
+            const float_type s_b = 2 * oy * dy * a + b;
+            const float_type s_c = oy * oy * a + c - (f1 + L / 2) * (f1 + L / 2) * (L * f1 + f1 * f1);
+            const float_type disc = s_b * s_b - 4 * s_a * s_c;
+
+            // only care about rays coming from inside
+            if (disc <= 0) return false;
+            const float_type s_plus = (-s_b + std::sqrt(disc)) / (2 * s_a);
+            const float_type s_minus = (-s_b - std::sqrt(disc)) / (2 * s_a);
+            if (s_minus > 0) hitInfo.l = s_minus;
+            else if (s_plus > 0) hitInfo.l = s_minus;
+            else return false;
+            hitInfo.p = ray.o + hitInfo.l * ray.d;
+            const float_vec tangent = normalize(float_vec(-hitInfo.p.y * a, (hitInfo.p.x + L / 2) * (L * f1 + f1 * f1)));
+            hitInfo.n = float_vec(-tangent.y, tangent.x);
+            hitInfo.t = type;
+            return true;
+        }
+    }
+
+    Ray sampleMeanRay() const override {
+        return Ray(float_vec(0, 0), float_vec(0, 0));
+    }
+
+    std::pair<Ray, float_type> sampleDiffuseRay() const override {
+        return std::pair(Ray(float_vec(0, 0), float_vec(0, 0)), float_type(0));
+    }
+
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeDiffuseRays() const override {
+        return std::pair(std::vector<Ray>(0), std::vector<Ray>(0));
+    }
+
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeInfiniteRays(const int& numRays) const override {
+        return std::pair(std::vector<Ray>(0), std::vector<Ray>(0));
     }
 
 };
@@ -749,14 +810,22 @@ struct TwoMirrorConcentrator : Geometry {
 
         // find rmin, rmax, rmean
         float_type rmin(std::numeric_limits<float_type>::max()), rmax(std::numeric_limits<float_type>::min());
+        float_type rmin2(std::numeric_limits<float_type>::max()), rmax2(std::numeric_limits<float_type>::min());
         for (const auto& v : p.vertices) {
-            const float_type proj(dot(v - apex, u));
+            const float_vec seg(v - apex);
+            const float_type proj(dot(seg, u));
             if (proj > rmax) rmax = proj;
             if (proj < rmin) rmin = proj;
+            const float_type len(length(seg));
+            if (len > rmax2) rmax2 = len;
+            if (len < rmin2) rmin2 = len;
         }
         h.rmin = rmin;
         h.rmax = rmax;
-        h.rmean = 0.5 * (rmax + rmin);
+        h.rmean = 0.5 * (rmin + rmax);
+        h.rmin2 = rmin2;
+        h.rmax2 = rmax2;
+        h.rmean2 = 0.5 * (rmin2 + rmax2);
 
         // return
         h.u = u;
@@ -778,18 +847,17 @@ struct TwoMirrorConcentrator : Geometry {
         // calculate cone to initialize
         if (HitInfo h; calcCone(p, p2, h)) {
             float_vec K_out(h.u), n2(K_out - normalize(p2 - p1));
-
             float_type r_0, r, a_0, a;
-
             if (i == 0) r_0 = r = h.rtraced;
             else if (i == 1) r_0 = r = h.rmin;
             else if (i == 2) r_0 = r = h.rmax;
-            else r_0 = r = h.rmean;
-
+            else if (i == 3) r_0 = r = h.rmean;
+            else if (i == 4) r_0 = r = h.rmin2;
+            else if (i == 5) r_0 = r = h.rmax2;
+            else r_0 = r = h.rmean2;
             if (j == 0) a_0 = a = h.a;
             else if (j == 1) a_0 = a = h.sina;
             else a_0 = a = r * h.tana;
-
             const float_type F(2 * L + f + r_0);
 
             // numerical integration
@@ -820,16 +888,16 @@ struct TwoMirrorConcentrator : Geometry {
                 K_int /= R_new;
                 if (HitInfo hh; calcCone(p, p2, hh)) {
                     K_out = hh.u;
-
                     if (i == 0) r = hh.rtraced;
                     else if (i == 1) r = hh.rmin;
                     else if (i == 2) r = hh.rmax;
-                    else r = hh.rmean;
-
+                    else if (i == 3) r = hh.rmean;
+                    else if (i == 4) r = hh.rmin2;
+                    else if (i == 5) r = hh.rmax2;
+                    else r = hh.rmean2;
                     if (j == 0) a = hh.a;
                     else if (j == 1) a = hh.sina;
                     else a = r * hh.tana;
-                    
                 }
                 else {
                     std::cout << "ERROR: No hit, breaking loop." << std::endl;
@@ -1294,6 +1362,43 @@ int main(int argc, char* argv[]) {
 
 
 
+    // finite system w/ analytic ellipse
+    if (BUILD_FINITE_ELLIPSE_SYSTEM) {
+
+        // output
+        std::string outputDataPath = "datafinell/";
+        if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
+        std::ofstream file;
+
+        // input
+        const float_type f1(1), L(1000), radius(f1 / 1000);
+        file.open(outputDataPath + "input.csv");
+        file << FLAT_SOURCE << "," << FLAT_TARGET << "," << radius << "," << f1 << "," << L << "\n";
+        file.close();
+
+        // source
+        LineSegment flatSource(Type::SOURCE, float_vec(-L, -radius), float_vec(-L, radius), float_vec(-1, 0), float_vec(-1, 0));
+        Circle cylindricalSource(Type::SOURCE, float_vec(-L, 0), radius);
+
+        // target
+        LineSegment flatTarget(Type::TARGET, float_vec(0, -radius), float_vec(0, radius), float_vec(1, 0), float_vec(1, 0));
+        Circle cylindricalTarget(Type::TARGET, float_vec(0, 0), radius);
+
+        // design
+        Design design;
+        if (FLAT_SOURCE) design.addGeometry(&flatSource);
+        else design.addGeometry(&cylindricalSource);
+        // design.addGeometry(&tmc);
+
+        // extreme rays
+        design.traceExtremeDiffuseRays(outputDataPath);
+
+        // add target
+        if (FLAT_TARGET) design.addGeometry(&flatTarget);
+        else design.addGeometry(&cylindricalTarget);
+    }
+
+
     // infinite system
     if (BUILD_INFINITE_SYSTEM) {
 
@@ -1347,7 +1452,7 @@ int main(int argc, char* argv[]) {
         const float_type L(3), f(0.5), dB(0.00001), B_max(85 * DEG_TO_RAD);
         const float_vec K_in(-1, 0);
         file.open(outputDataPath + "input.csv");
-        file << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
+        file << EPSILON << "," << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
         file.close();
 
         // infinite source
@@ -1360,7 +1465,7 @@ int main(int argc, char* argv[]) {
 
         // two-mirror concentrator
         TwoMirrorConcentrator tmc;
-        tmc.buildInfArb(target, inv, L, f, K_in, dB, B_max, 0, 0);
+        tmc.buildInfArb(target, inv, L, f, K_in, dB, B_max, 6, 2);
         tmc.writeTwoMirrorConcentrator(outputDataPath);
 
         // design
