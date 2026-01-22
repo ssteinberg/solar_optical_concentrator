@@ -20,335 +20,337 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// main
-int main(int argc, char* argv[]) {
-    // finite system
-    if (BUILD_FINITE) {
+void build_finite() {
+#if !BUILD_FINITE
+    return;
+#endif
 
-        // output
-        std::string outputDataPath = "datafin/";
-        if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
-        std::ofstream file;
+    // output
+    std::string outputDataPath = "datafin/";
+    if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
+    std::ofstream file;
 
-        // input
-        const bool inv(false);
-        const float_type f1(1), L(30), f2(1), da(0.000001), a_max(75 * DEG_TO_RAD), w(1), hl(f1 / 1000);
-        file.open(outputDataPath + "input.csv");
-        file << FLAT_SOURCE << "," << FLAT_TARGET << "," << inv << "," << hl << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "," << w << "\n";
-        file.close();
+    // input
+    const bool inv(false);
+    const float_type f1(1), L(30), f2(1), da(0.000001), a_max(75 * DEG_TO_RAD), w(1), hl(f1 / 1000);
+    file.open(outputDataPath + "input.csv");
+    file << FLAT_SOURCE << "," << FLAT_TARGET << "," << inv << "," << hl << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "," << w << "\n";
+    file.close();
 
-        // two-mirror concentrator
-        TwoMirrorConcentrator tmc;
-        tmc.buildFin(inv, f1, L, f2, da, a_max, w);
-        tmc.writeTwoMirrorConcentrator(outputDataPath);
+    // two-mirror concentrator
+    TwoMirrorConcentrator tmc;
+    tmc.buildFin(inv, f1, L, f2, da, a_max, w);
+    tmc.writeTwoMirrorConcentrator(outputDataPath);
 
-        // design
-        Design design;
-        design.addGeometry(&tmc);
-        LineSegment flatSource(Type::SOURCE, float_vec(-L, -hl), float_vec(-L, hl), float_vec(-1, 0), float_vec(-1, 0));
-        Circle cylindricalSource(Type::SOURCE, float_vec(-L, 0), hl);
-        LineSegment flatTarget(Type::TARGET, float_vec(0, -hl * w), float_vec(0, hl * w), float_vec(1, 0), float_vec(1, 0));
-        Circle cylindricalTarget(Type::TARGET, float_vec(0, 0), hl);
-        if (FLAT_SOURCE) {
-            design.addGeometry(&flatSource);
-            design.traceExtremeDiffuseRays(outputDataPath); // extreme rays
-            if (FLAT_TARGET) design.addGeometry(&flatTarget);
-            else {
-                cylindricalTarget.r /= PI;
-                design.addGeometry(&cylindricalTarget);
-            }
-        }
+    // design
+    Design design;
+    design.addGeometry(&tmc);
+    LineSegment flatSource(Type::SOURCE, float_vec(-L, -hl), float_vec(-L, hl), float_vec(-1, 0), float_vec(-1, 0));
+    Circle cylindricalSource(Type::SOURCE, float_vec(-L, 0), hl);
+    LineSegment flatTarget(Type::TARGET, float_vec(0, -hl * w), float_vec(0, hl * w), float_vec(1, 0), float_vec(1, 0));
+    Circle cylindricalTarget(Type::TARGET, float_vec(0, 0), hl);
+    if (FLAT_SOURCE) {
+        design.addGeometry(&flatSource);
+        design.traceExtremeDiffuseRays(outputDataPath); // extreme rays
+        if (FLAT_TARGET) design.addGeometry(&flatTarget);
         else {
-            design.addGeometry(&cylindricalSource);
-            design.traceExtremeDiffuseRays(outputDataPath); // extreme rays
-            if (FLAT_TARGET) {
-                flatTarget.p1.y *= PI;
-                flatTarget.p2.y *= PI;
-                design.addGeometry(&flatTarget);
-            }
-            else design.addGeometry(&cylindricalTarget);
+            cylindricalTarget.r /= PI;
+            design.addGeometry(&cylindricalTarget);
         }
-
-        // final plot
-        design.traceFinalPlotRays(outputDataPath);
-
-        // phase space
-        // design.tracePhaseSpace(outputDataPath, 100000);
-
-        // hit report
-        // const int numberOfDesigns = 10;
-        // std::vector<Design> designs(numberOfDesigns);
-        // std::vector<LineSegment> flatTargets;
-        // std::vector<Circle> cylindricalTargets;
-        // float_type increment = 2 * hl / numberOfDesigns;
-        // if (FLAT_SOURCE && !FLAT_TARGET) increment /= PI;
-        // else if (!FLAT_SOURCE && FLAT_TARGET) increment *= PI;
-        // for (int i = 0; i < numberOfDesigns; ++i) {
-        //     if (FLAT_TARGET) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
-        //     else cylindricalTargets.emplace_back(Type::TARGET, float_vec(0, 0), (i + 1) * increment);
-        // }
-        // for (int i = 0; i < numberOfDesigns; ++i) {
-        //     if (FLAT_SOURCE) designs[i].addGeometry(&flatSource);
-        //     else designs[i].addGeometry(&cylindricalSource);
-        //     if (FLAT_TARGET) designs[i].addGeometry(&flatTargets[i]);
-        //     else designs[i].addGeometry(&cylindricalTargets[i]);
-        //     designs[i].addGeometry(&tmc);
-        // }
-        // std::vector<float_vec> hitData;
-        // const int numberOfTrials = 1;
-        // const int numberOfRays = 10000;
-        // for (const auto& d : designs) for (int i = 0; i < numberOfTrials; ++i) hitData.emplace_back(d.target->getLength() / d.source->getLength(), d.traceHitData(numberOfRays));
-        // file.open(outputDataPath + "hitdata.csv");
-        // for (const auto& p : hitData) file << p.x << "," << p.y << "\n";
-        // file.close();
+    }
+    else {
+        design.addGeometry(&cylindricalSource);
+        design.traceExtremeDiffuseRays(outputDataPath); // extreme rays
+        if (FLAT_TARGET) {
+            flatTarget.p1.y *= PI;
+            flatTarget.p2.y *= PI;
+            design.addGeometry(&flatTarget);
+        }
+        else design.addGeometry(&cylindricalTarget);
     }
 
+    // final plot
+    design.traceFinalPlotRays(outputDataPath);
 
+    // phase space
+    // design.tracePhaseSpace(outputDataPath, 100000);
 
-
-
-    // finite system w/ analytic ellipse
-    if (BUILD_FINITE_ELLIPSE) {
-
-        // output
-        std::string outputDataPath = "datafinell/";
-        if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
-        std::ofstream file;
-
-        // input
-        const float_type f1(1), L(30), hl(f1 / 1000);
-        file.open(outputDataPath + "input.csv");
-        file << FLAT_SOURCE << "," << FLAT_TARGET << "," << hl << "," << f1 << "," << L << "\n";
-        file.close();
-
-        // design
-        Design design;
-        Ellipse Elliot(Type::MIRROR, f1, L);
-        design.addGeometry(&Elliot);
-        LineSegment flatSource(Type::SOURCE, float_vec(-L, -hl), float_vec(-L, hl), float_vec(-1, 0), float_vec(-1, 0));
-        Circle cylindricalSource(Type::SOURCE, float_vec(-L, 0), hl);
-        LineSegment flatTarget(Type::TARGET, float_vec(0, -hl), float_vec(0, hl), float_vec(1, 0), float_vec(1, 0));
-        Circle cylindricalTarget(Type::TARGET, float_vec(0, 0), hl);
-        if (FLAT_SOURCE) {
-            design.addGeometry(&flatSource);
-            design.traceExtremeDiffuseRaysEllipse(outputDataPath); // extreme rays
-            if (FLAT_TARGET) design.addGeometry(&flatTarget);
-            else {
-                cylindricalTarget.r /= PI;
-                design.addGeometry(&cylindricalTarget);
-            }
-        }
-        else {
-            design.addGeometry(&cylindricalSource);
-            design.traceExtremeDiffuseRaysEllipse(outputDataPath); // extreme rays
-            if (FLAT_TARGET) {
-                flatTarget.p1.y *= PI;
-                flatTarget.p2.y *= PI;
-                design.addGeometry(&flatTarget);
-            }
-            else design.addGeometry(&cylindricalTarget);
-        }
-
-        // phase space
-        design.tracePhaseSpaceEllipse(outputDataPath, 100000);
-
-        // hit report
-        const int numberOfDesigns = 10;
-        std::vector<Design> designs(numberOfDesigns);
-        std::vector<LineSegment> flatTargets;
-        std::vector<Circle> cylindricalTargets;
-        float_type increment = 2 * hl / numberOfDesigns;
-        if (FLAT_SOURCE && !FLAT_TARGET) increment /= PI;
-        else if (!FLAT_SOURCE && FLAT_TARGET) increment *= PI;
-        for (int i = 0; i < numberOfDesigns; ++i) {
-            if (FLAT_TARGET) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
-            else cylindricalTargets.emplace_back(Type::TARGET, float_vec(0, 0), (i + 1) * increment);
-        }
-        for (int i = 0; i < numberOfDesigns; ++i) {
-            if (FLAT_SOURCE) designs[i].addGeometry(&flatSource);
-            else designs[i].addGeometry(&cylindricalSource);
-            if (FLAT_TARGET) designs[i].addGeometry(&flatTargets[i]);
-            else designs[i].addGeometry(&cylindricalTargets[i]);
-            designs[i].addGeometry(&Elliot);
-        }
-        std::vector<float_vec> hitData;
-        const int numberOfTrials = 1;
-        const int numberOfRays = 10000;
-        for (const auto& d : designs) for (int i = 0; i < numberOfTrials; ++i) hitData.emplace_back(d.target->getLength() / d.source->getLength(), d.traceHitDataEllipse(numberOfRays));
-        file.open(outputDataPath + "hitdata.csv");
-        for (const auto& p : hitData) file << p.x << "," << p.y << "\n";
-        file.close();
-    }
-
-
-
-
-
-    // finite system w/ pair of analytic parabolas
-    if (BUILD_FINITE_PARABOLA) {
-
-        // output
-        std::string outputDataPath = "datafinpara/";
-        if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
-        std::ofstream file;
-
-        // input
-        const float_type f1(1), L(4), f2(2), hl(f1 / 1000);
-        file.open(outputDataPath + "input.csv");
-        file << FLAT_SOURCE << "," << FLAT_TARGET << "," << hl << "," << f1 << "," << L << "," << f2 << "\n";
-        file.close();
-
-        // design
-        Design design;
-        Parabola Param(Type::MIRROR1, 1 / (4 * f1), -f1 - L);
-        Parabola Parker(Type::MIRROR2, -1 / (4 * f2), f2);
-        design.addGeometry(&Param);
-        design.addGeometry(&Parker);
-        LineSegment flatSource(Type::SOURCE, float_vec(-L, -hl), float_vec(-L, hl), float_vec(-1, 0), float_vec(-1, 0));
-        Circle cylindricalSource(Type::SOURCE, float_vec(-L, 0), hl);
-        LineSegment flatTarget(Type::TARGET, float_vec(0, -hl), float_vec(0, hl), float_vec(1, 0), float_vec(1, 0));
-        Circle cylindricalTarget(Type::TARGET, float_vec(0, 0), hl);
-        if (FLAT_SOURCE) {
-            design.addGeometry(&flatSource);
-            design.traceExtremeDiffuseRaysParabola(outputDataPath); // extreme rays
-            if (FLAT_TARGET) design.addGeometry(&flatTarget);
-            else {
-                cylindricalTarget.r /= PI;
-                design.addGeometry(&cylindricalTarget);
-            }
-        }
-        else {
-            design.addGeometry(&cylindricalSource);
-            design.traceExtremeDiffuseRaysParabola(outputDataPath); // extreme rays
-            if (FLAT_TARGET) {
-                flatTarget.p1.y *= PI;
-                flatTarget.p2.y *= PI;
-                design.addGeometry(&flatTarget);
-            }
-            else design.addGeometry(&cylindricalTarget);
-        }
-
-        // phase space
-        design.tracePhaseSpaceParabola(outputDataPath, 100000);
-
-        // hit report
-        // const int numberOfDesigns = 10;
-        // std::vector<Design> designs(numberOfDesigns);
-        // std::vector<LineSegment> flatTargets;
-        // std::vector<Circle> cylindricalTargets;
-        // float_type increment = 2 * hl / numberOfDesigns;
-        // if (FLAT_SOURCE && !FLAT_TARGET) increment /= PI;
-        // else if (!FLAT_SOURCE && FLAT_TARGET) increment *= PI;
-        // for (int i = 0; i < numberOfDesigns; ++i) {
-        //     if (FLAT_TARGET) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
-        //     else cylindricalTargets.emplace_back(Type::TARGET, float_vec(0, 0), (i + 1) * increment);
-        // }
-        // for (int i = 0; i < numberOfDesigns; ++i) {
-        //     if (FLAT_SOURCE) designs[i].addGeometry(&flatSource);
-        //     else designs[i].addGeometry(&cylindricalSource);
-        //     if (FLAT_TARGET) designs[i].addGeometry(&flatTargets[i]);
-        //     else designs[i].addGeometry(&cylindricalTargets[i]);
-        //     designs[i].addGeometry(&Param);
-        //     designs[i].addGeometry(&Parker);
-        // }
-        // std::vector<float_vec> hitData;
-        // const int numberOfTrials = 1;
-        // const int numberOfRays = 10000;
-        // for (const auto& d : designs) for (int i = 0; i < numberOfTrials; ++i) hitData.emplace_back(d.target->getLength() / d.source->getLength(), d.traceHitDataParabola(numberOfRays));
-        // file.open(outputDataPath + "hitdata.csv");
-        // for (const auto& p : hitData) file << p.x << "," << p.y << "\n";
-        // file.close();
-    }
-
-
-
-
-
-    // infinite system
-    if (BUILD_INFINITE) {
-
-        // output
-        std::string outputDataPath = "datainf/";
-        if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
-        std::ofstream file;
-
-        // input
-        const bool inv(true);
-        const float_type L(3), f(0.5), dB(0.00001), B_max(85 * DEG_TO_RAD);
-        const float_vec K_in(-1, 0);
-        file.open(outputDataPath + "input.csv");
-        file << FLAT_TARGET << "," << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
-        file.close();
-
-        // two-mirror concentrator
-        TwoMirrorConcentrator tmc;
-        tmc.buildInf(inv, L, f, K_in, dB, B_max);
-        tmc.writeTwoMirrorConcentrator(outputDataPath);
-
-        // design
-        Design d;
-        d.addGeometry(&tmc);
-
-        // infinite source
-        LineSegment source(Type::SOURCE, float_vec(0, -2), float_vec(0, 2), K_in, K_in);
-        // LineSegment source(Type::SOURCE, float_vec(-1, -2), float_vec(-1, 2), K_in, K_in);
-        d.addGeometry(&source);
-
-        // trace extreme rays
-        d.traceExtremeInfiniteRays(outputDataPath, 50);
-
-        // flat target
-        LineSegment target(Type::TARGET, float_vec(0, -EPSILON_OVER_TWO), float_vec(0, EPSILON_OVER_TWO), float_vec(1, 0), float_vec(1, 0));
-        d.addGeometry(&target);
-    }
-
-    // infinite system w/ arbitrary target
-    if (BUILD_INFINITE_ARBITRARY) {
-
-        // output
-        std::string outputDataPath = "datainfarb/";
-        if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
-        std::ofstream file;
-
-        // input
-        const bool inv(true);
-        const float_type L(3), f(0.5), dB(0.00001), B_max(85 * DEG_TO_RAD);
-        const float_vec K_in(-1, 0);
-        file.open(outputDataPath + "input.csv");
-        file << EPSILON << "," << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
-        file.close();
-
-        // infinite source
-        LineSegment source(Type::SOURCE, float_vec(0, -2), float_vec(0, 2), K_in, K_in);
-
-        // target
-        const std::vector<float_vec> targetVertices = {float_vec(0, -EPSILON_OVER_TWO), float_vec(0, EPSILON_OVER_TWO)}; // ideal
-        // const std::vector<float_vec> targetVertices = {float_vec(1, 1), float_vec(-2, 0), float_vec(0, -1)}; // triangle
-        const Polygon target(Type::TARGET, targetVertices);
-
-        // two-mirror concentrator
-        TwoMirrorConcentrator tmc;
-        tmc.buildInfArb(target, inv, L, f, K_in, dB, B_max, 6, 2);
-        tmc.writeTwoMirrorConcentrator(outputDataPath);
-
-        // design
-        Design d;
-        d.addGeometry(&tmc);
-        d.addGeometry(&source);
-
-        // trace extreme rays
-        d.traceExtremeInfiniteRays(outputDataPath, 50);
-    }
-
+    // hit report
+    // const int numberOfDesigns = 10;
+    // std::vector<Design> designs(numberOfDesigns);
+    // std::vector<LineSegment> flatTargets;
+    // std::vector<Circle> cylindricalTargets;
+    // float_type increment = 2 * hl / numberOfDesigns;
+    // if (FLAT_SOURCE && !FLAT_TARGET) increment /= PI;
+    // else if (!FLAT_SOURCE && FLAT_TARGET) increment *= PI;
+    // for (int i = 0; i < numberOfDesigns; ++i) {
+    //     if (FLAT_TARGET) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
+    //     else cylindricalTargets.emplace_back(Type::TARGET, float_vec(0, 0), (i + 1) * increment);
+    // }
+    // for (int i = 0; i < numberOfDesigns; ++i) {
+    //     if (FLAT_SOURCE) designs[i].addGeometry(&flatSource);
+    //     else designs[i].addGeometry(&cylindricalSource);
+    //     if (FLAT_TARGET) designs[i].addGeometry(&flatTargets[i]);
+    //     else designs[i].addGeometry(&cylindricalTargets[i]);
+    //     designs[i].addGeometry(&tmc);
+    // }
+    // std::vector<float_vec> hitData;
+    // const int numberOfTrials = 1;
+    // const int numberOfRays = 10000;
+    // for (const auto& d : designs) for (int i = 0; i < numberOfTrials; ++i) hitData.emplace_back(d.target->getLength() / d.source->getLength(), d.traceHitData(numberOfRays));
+    // file.open(outputDataPath + "hitdata.csv");
+    // for (const auto& p : hitData) file << p.x << "," << p.y << "\n";
+    // file.close();
 }
 
+void build_finite_ellipse() {
+#if !BUILD_FINITE_ELLIPSE
+    return;
+#endif
 
+    // output
+    std::string outputDataPath = "datafinell/";
+    if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
+    std::ofstream file;
+
+    // input
+    const float_type f1(1), L(30), hl(f1 / 1000);
+    file.open(outputDataPath + "input.csv");
+    file << FLAT_SOURCE << "," << FLAT_TARGET << "," << hl << "," << f1 << "," << L << "\n";
+    file.close();
+
+    // design
+    Design design;
+    Ellipse Elliot(Type::MIRROR, f1, L);
+    design.addGeometry(&Elliot);
+    LineSegment flatSource(Type::SOURCE, float_vec(-L, -hl), float_vec(-L, hl), float_vec(-1, 0), float_vec(-1, 0));
+    Circle cylindricalSource(Type::SOURCE, float_vec(-L, 0), hl);
+    LineSegment flatTarget(Type::TARGET, float_vec(0, -hl), float_vec(0, hl), float_vec(1, 0), float_vec(1, 0));
+    Circle cylindricalTarget(Type::TARGET, float_vec(0, 0), hl);
+    if (FLAT_SOURCE) {
+        design.addGeometry(&flatSource);
+        design.traceExtremeDiffuseRaysEllipse(outputDataPath); // extreme rays
+        if (FLAT_TARGET) design.addGeometry(&flatTarget);
+        else {
+            cylindricalTarget.r /= PI;
+            design.addGeometry(&cylindricalTarget);
+        }
+    }
+    else {
+        design.addGeometry(&cylindricalSource);
+        design.traceExtremeDiffuseRaysEllipse(outputDataPath); // extreme rays
+        if (FLAT_TARGET) {
+            flatTarget.p1.y *= PI;
+            flatTarget.p2.y *= PI;
+            design.addGeometry(&flatTarget);
+        }
+        else design.addGeometry(&cylindricalTarget);
+    }
+
+    // phase space
+    design.tracePhaseSpaceEllipse(outputDataPath, 100000);
+
+    // hit report
+    const int numberOfDesigns = 10;
+    std::vector<Design> designs(numberOfDesigns);
+    std::vector<LineSegment> flatTargets;
+    std::vector<Circle> cylindricalTargets;
+    float_type increment = 2 * hl / numberOfDesigns;
+    if (FLAT_SOURCE && !FLAT_TARGET) increment /= PI;
+    else if (!FLAT_SOURCE && FLAT_TARGET) increment *= PI;
+    for (int i = 0; i < numberOfDesigns; ++i) {
+        if (FLAT_TARGET) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
+        else cylindricalTargets.emplace_back(Type::TARGET, float_vec(0, 0), (i + 1) * increment);
+    }
+    for (int i = 0; i < numberOfDesigns; ++i) {
+        if (FLAT_SOURCE) designs[i].addGeometry(&flatSource);
+        else designs[i].addGeometry(&cylindricalSource);
+        if (FLAT_TARGET) designs[i].addGeometry(&flatTargets[i]);
+        else designs[i].addGeometry(&cylindricalTargets[i]);
+        designs[i].addGeometry(&Elliot);
+    }
+    std::vector<float_vec> hitData;
+    const int numberOfTrials = 1;
+    const int numberOfRays = 10000;
+    for (const auto& d : designs) for (int i = 0; i < numberOfTrials; ++i) hitData.emplace_back(d.target->getLength() / d.source->getLength(), d.traceHitDataEllipse(numberOfRays));
+    file.open(outputDataPath + "hitdata.csv");
+    for (const auto& p : hitData) file << p.x << "," << p.y << "\n";
+    file.close();
+}
+
+void build_finite_parabola() {
+#if !BUILD_FINITE_PARABOLA
+    return;
+#endif
+
+    // output
+    std::string outputDataPath = "datafinpara/";
+    if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
+    std::ofstream file;
+
+    // input
+    const float_type f1(1), L(4), f2(2), hl(f1 / 1000);
+    file.open(outputDataPath + "input.csv");
+    file << FLAT_SOURCE << "," << FLAT_TARGET << "," << hl << "," << f1 << "," << L << "," << f2 << "\n";
+    file.close();
+
+    // design
+    Design design;
+    Parabola Param(Type::MIRROR1, 1 / (4 * f1), -f1 - L);
+    Parabola Parker(Type::MIRROR2, -1 / (4 * f2), f2);
+    design.addGeometry(&Param);
+    design.addGeometry(&Parker);
+    LineSegment flatSource(Type::SOURCE, float_vec(-L, -hl), float_vec(-L, hl), float_vec(-1, 0), float_vec(-1, 0));
+    Circle cylindricalSource(Type::SOURCE, float_vec(-L, 0), hl);
+    LineSegment flatTarget(Type::TARGET, float_vec(0, -hl), float_vec(0, hl), float_vec(1, 0), float_vec(1, 0));
+    Circle cylindricalTarget(Type::TARGET, float_vec(0, 0), hl);
+    if (FLAT_SOURCE) {
+        design.addGeometry(&flatSource);
+        design.traceExtremeDiffuseRaysParabola(outputDataPath); // extreme rays
+        if (FLAT_TARGET) design.addGeometry(&flatTarget);
+        else {
+            cylindricalTarget.r /= PI;
+            design.addGeometry(&cylindricalTarget);
+        }
+    }
+    else {
+        design.addGeometry(&cylindricalSource);
+        design.traceExtremeDiffuseRaysParabola(outputDataPath); // extreme rays
+        if (FLAT_TARGET) {
+            flatTarget.p1.y *= PI;
+            flatTarget.p2.y *= PI;
+            design.addGeometry(&flatTarget);
+        }
+        else design.addGeometry(&cylindricalTarget);
+    }
+
+    // phase space
+    design.tracePhaseSpaceParabola(outputDataPath, 100000);
+
+    // hit report
+    // const int numberOfDesigns = 10;
+    // std::vector<Design> designs(numberOfDesigns);
+    // std::vector<LineSegment> flatTargets;
+    // std::vector<Circle> cylindricalTargets;
+    // float_type increment = 2 * hl / numberOfDesigns;
+    // if (FLAT_SOURCE && !FLAT_TARGET) increment /= PI;
+    // else if (!FLAT_SOURCE && FLAT_TARGET) increment *= PI;
+    // for (int i = 0; i < numberOfDesigns; ++i) {
+    //     if (FLAT_TARGET) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
+    //     else cylindricalTargets.emplace_back(Type::TARGET, float_vec(0, 0), (i + 1) * increment);
+    // }
+    // for (int i = 0; i < numberOfDesigns; ++i) {
+    //     if (FLAT_SOURCE) designs[i].addGeometry(&flatSource);
+    //     else designs[i].addGeometry(&cylindricalSource);
+    //     if (FLAT_TARGET) designs[i].addGeometry(&flatTargets[i]);
+    //     else designs[i].addGeometry(&cylindricalTargets[i]);
+    //     designs[i].addGeometry(&Param);
+    //     designs[i].addGeometry(&Parker);
+    // }
+    // std::vector<float_vec> hitData;
+    // const int numberOfTrials = 1;
+    // const int numberOfRays = 10000;
+    // for (const auto& d : designs) for (int i = 0; i < numberOfTrials; ++i) hitData.emplace_back(d.target->getLength() / d.source->getLength(), d.traceHitDataParabola(numberOfRays));
+    // file.open(outputDataPath + "hitdata.csv");
+    // for (const auto& p : hitData) file << p.x << "," << p.y << "\n";
+    // file.close();
+}
+
+void build_infinite() {
+#if !BUILD_INFINITE
+    return;
+#endif
+
+    // output
+    std::string outputDataPath = "datainf/";
+    if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
+    std::ofstream file;
+
+    // input
+    const bool inv(true);
+    const float_type L(3), f(0.5), dB(0.00001), B_max(85 * DEG_TO_RAD);
+    const float_vec K_in(-1, 0);
+    file.open(outputDataPath + "input.csv");
+    file << FLAT_TARGET << "," << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
+    file.close();
+
+    // two-mirror concentrator
+    TwoMirrorConcentrator tmc;
+    tmc.buildInf(inv, L, f, K_in, dB, B_max);
+    tmc.writeTwoMirrorConcentrator(outputDataPath);
+
+    // design
+    Design d;
+    d.addGeometry(&tmc);
+
+    // infinite source
+    LineSegment source(Type::SOURCE, float_vec(0, -2), float_vec(0, 2), K_in, K_in);
+    // LineSegment source(Type::SOURCE, float_vec(-1, -2), float_vec(-1, 2), K_in, K_in);
+    d.addGeometry(&source);
+
+    // trace extreme rays
+    d.traceExtremeInfiniteRays(outputDataPath, 50);
+
+    // flat target
+    LineSegment target(Type::TARGET, float_vec(0, -EPSILON_OVER_TWO), float_vec(0, EPSILON_OVER_TWO), float_vec(1, 0), float_vec(1, 0));
+    d.addGeometry(&target);
+}
+
+void build_infinite_arbitrary() {
+#if !BUILD_INFINITE_ARBITRARY
+    return;
+#endif
+
+    // output
+    std::string outputDataPath = "datainfarb/";
+    if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
+    std::ofstream file;
+
+    // input
+    const bool inv(true);
+    const float_type L(3), f(0.5), dB(0.00001), B_max(85 * DEG_TO_RAD);
+    const float_vec K_in(-1, 0);
+    file.open(outputDataPath + "input.csv");
+    file << EPSILON << "," << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
+    file.close();
+
+    // infinite source
+    LineSegment source(Type::SOURCE, float_vec(0, -2), float_vec(0, 2), K_in, K_in);
+
+    // target
+    const std::vector<float_vec> targetVertices = {float_vec(0, -EPSILON_OVER_TWO), float_vec(0, EPSILON_OVER_TWO)}; // ideal
+    // const std::vector<float_vec> targetVertices = {float_vec(1, 1), float_vec(-2, 0), float_vec(0, -1)}; // triangle
+    const Polygon target(Type::TARGET, targetVertices);
+
+    // two-mirror concentrator
+    TwoMirrorConcentrator tmc;
+    tmc.buildInfArb(target, inv, L, f, K_in, dB, B_max, 6, 2);
+    tmc.writeTwoMirrorConcentrator(outputDataPath);
+
+    // design
+    Design d;
+    d.addGeometry(&tmc);
+    d.addGeometry(&source);
+
+    // trace extreme rays
+    d.traceExtremeInfiniteRays(outputDataPath, 50);
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+int main(int argc, char* argv[]) {
+        build_finite();
+        build_finite_ellipse();
+        build_finite_parabola();
+        build_infinite();
+        build_infinite_arbitrary();
+}
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /*
 

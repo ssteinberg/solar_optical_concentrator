@@ -11,13 +11,14 @@ constexpr bool DOINKING = true;
 constexpr float_type DOINK = 1e-5;
 
 // finite system
-constexpr bool BUILD_FINITE = true;
-constexpr bool BUILD_FINITE_ELLIPSE = true;
-constexpr bool BUILD_FINITE_PARABOLA = false;
+
+#define BUILD_FINITE                                true
+#define BUILD_FINITE_ELLIPSE                        true
+#define BUILD_FINITE_PARABOLA                       false
 
 // infinite system
-constexpr bool BUILD_INFINITE = false;
-constexpr bool BUILD_INFINITE_ARBITRARY = false;
+#define BUILD_INFINITE                              false
+#define BUILD_INFINITE_ARBITRARY                    false
 
 // source and target
 constexpr bool FLAT_SOURCE = true;
