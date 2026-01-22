@@ -1,0 +1,10 @@
+target_sources(2MC
+        PRIVATE
+        circle.cpp
+        ellipse.cpp
+        line_segment.cpp
+        mirror.cpp
+        parabola.cpp
+        polygon.cpp
+        two_mirror_concentrator.cpp
+)
