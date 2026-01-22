@@ -8,6 +8,7 @@
 #include <vector>
 
 // project
+#include "config.h"
 #include "types.h"
 #include "design.h"
 #include "geometry/circle.h"
