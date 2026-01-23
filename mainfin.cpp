@@ -1,0 +1,1232 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// standard library
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <limits>
+#include <memory>
+#include <ranges>
+#include <tuple>
+#include <vector>
+
+// linear algebra
+#include "linalg.h"
+using namespace linalg::aliases;
+
+// parallelization
+#include <omp.h>
+
+// floating-point precision
+using float_type = double;
+typedef linalg::vec<float_type, 2> float_vec;
+
+// global constants
+constexpr float_type PI = 3.14159265358979;
+constexpr float_type PI_OVER_TWO = PI / 2;
+constexpr float_type ONE_OVER_PI = 1 / PI;
+constexpr float_type DEG_TO_RAD = PI / 180;
+constexpr float_type RAD_TO_DEG = 180 / PI;
+constexpr float_type EPSILON = 0.05;
+constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
+
+// build system
+constexpr bool TWO_MIRROR_CONCENTRATOR = true;
+constexpr bool PARABOLIC_CONCENTRATOR = true;
+constexpr bool ELLIPTICAL_CONCENTRATOR = true;
+
+// source and target
+constexpr bool FLAT_SOURCE = true;
+constexpr bool FLAT_TARGET = true;
+constexpr bool IGNORE_SOURCE = true;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// uniform random variable
+#include <stdint.h>
+namespace PCG32 {
+	static uint64_t mcg_state = 0xcafef00dd15ea5e5u; // must be odd
+	static uint64_t const multiplier = 6364136223846793005u;
+	uint32_t pcg32_fast(void) {
+		uint64_t x = mcg_state;
+		const unsigned count = (unsigned)(x >> 61);
+		mcg_state = x * multiplier;
+		x ^= x >> 22;
+		return (uint32_t)(x >> (22 + count));
+	}
+	float rand() {
+		return float(double(pcg32_fast()) / 4294967296.0);
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// ray
+struct Ray {
+    float_vec o, d;
+    Ray() : o(), d(float_vec(0.0, 1.0)) {}
+    Ray(const float_vec& o, const float_vec& d) : o(o), d(d) {}
+};
+
+// path
+struct Path {
+
+    std::vector<float_vec> vertices;
+
+    void addVertex(const float_vec& v) {
+        vertices.push_back(v);
+    }
+
+    void writePath(std::ofstream& file) const {
+        const int pathLength = vertices.size() - 1;
+        if (pathLength > 0) {
+            for (int i = 0; i < pathLength; ++i) {
+                const float_vec v1 = vertices[i];
+                const float_vec v2 = vertices[i + 1];
+                file << v1.x << "," << v1.y << "," << v2.x << "," << v2.y << "\n";
+            }
+        }
+    }
+
+    void writeFinalSegment(std::ofstream& file) const {
+        const int pathLength = vertices.size() - 1;
+        if (pathLength > 0) {
+            const float_vec v1 = vertices[pathLength - 1];
+            const float_vec v2 = vertices[pathLength];
+            file << v1.x << "," << v1.y << "," << v2.x << "," << v2.y << "\n";
+        }
+    }
+    
+};
+
+// shape
+enum struct Shape {
+    FLAT,
+    CYLINDRICAL,
+    ELLIPTICAL,
+    PARABOLIC,
+    CONSTRUCTED
+};
+
+// type
+enum struct Type {
+    SOURCE,
+    TARGET,
+    CONCENTRATOR,
+    MIRROR1,
+    MIRROR2,
+    BARRIER
+};
+
+// hit info
+struct HitInfo {
+    float_type l;
+    float_vec p, n;
+    Type t;
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// geometry
+struct Geometry {
+    Shape shape;
+    Type type;
+    Geometry(const Shape& s, const Type& t) : shape(s), type(t) {}
+    virtual float_vec getCentre() const = 0;
+    virtual float_type getLength() const = 0;
+    virtual bool intersect(const Ray& ray, HitInfo& hitInfo, const Type& t) const = 0;
+    virtual Ray sampleMeanRay() const = 0;
+    virtual std::pair<Ray, float_type> sampleDiffuseRay() const = 0;
+    virtual std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() const = 0;
+    virtual std::vector<Ray> generateFinalPlotRays() const = 0;
+};
+
+// line segment
+struct LineSegment : Geometry {
+
+    float_vec p1, p2, n1, n2;
+
+    LineSegment(const Type& t, const float_vec& p1, const float_vec& p2, const float_vec& n1, const float_vec& n2) : Geometry(Shape::FLAT, t), p1(p1), p2(p2), n1(n1), n2(n2) {}
+
+    float_vec getCentre() const override { return (p1 + p2) / 2; }
+
+    float_type getLength() const override { return length(p1 - p2); }
+
+    bool intersect(const Ray& ray, HitInfo& hitInfo, const Type& t) const override {
+        if (type != t) return false;
+        else if (IGNORE_SOURCE && type == Type::SOURCE) return false;
+        else if (dot(n1, -ray.d) <= 0 && type == Type::TARGET ) return false;
+        else {
+            const float_vec segDir = p2 - p1;
+            const float_type rayDir_x_segDir = cross(ray.d, segDir);
+            if (rayDir_x_segDir == 0) return false;
+            const float_type s = cross((p1 - ray.o), ray.d) / rayDir_x_segDir;
+            const float_type t = cross((p1 - ray.o), segDir) / rayDir_x_segDir;
+            if (0 <= s && s <= 1 && 0 < t) {
+                hitInfo.l = t;
+                hitInfo.p = ray.o + hitInfo.l * ray.d;
+                hitInfo.n = normalize((1 - s) * n1 + s * n2);
+                hitInfo.t = type;
+                return true;
+            }
+            return false;
+        }
+    }
+
+    Ray sampleMeanRay() const override {
+        const float_type s = PCG32::rand();
+        const float_vec p = (1 - s) * p1 + s * p2;
+        const float_vec n = (1 - s) * n1 + s * n2;
+        return Ray(p, n);
+    }
+
+    std::pair<Ray, float_type> sampleDiffuseRay() const override {
+        const Ray meanRay = sampleMeanRay();
+        const float_vec n = meanRay.d;
+        const float_type theta = std::asin(2 * PCG32::rand() - 1);
+        const float_type cos0 = std::cos(theta);
+        const float_type sin0 = std::sin(theta);
+        const float_vec rotDir(n.x * cos0 - n.y * sin0, n.x * sin0 + n.y * cos0);
+        return std::pair(Ray(meanRay.o, rotDir), theta);
+    }
+
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() const override {
+        std::vector<Ray> p1ExtrRays, p2ExtrRays;
+        for (int degrees = -90; degrees <= 90; degrees += 2) {
+            const float_type theta = degrees * DEG_TO_RAD;
+            const float_type cos0 = std::cos(theta);
+            const float_type sin0 = std::sin(theta);
+            const float_vec p1RotDir(n1.x * cos0 - n1.y * sin0, n1.x * sin0 + n1.y * cos0);
+            const float_vec p2RotDir(n2.x * cos0 - n2.y * sin0, n2.x * sin0 + n2.y * cos0);
+            p1ExtrRays.emplace_back(p1, p1RotDir);
+            p2ExtrRays.emplace_back(p2, p2RotDir);
+        }
+        return std::pair(p1ExtrRays, p2ExtrRays);
+    }
+
+    std::vector<Ray> generateFinalPlotRays() const override {
+        std::vector<Ray> rays;
+        for (int degrees = -90; degrees <= 90; degrees += 15) {
+            const float_type theta = degrees * DEG_TO_RAD;
+            const float_type cos0 = std::cos(theta);
+            const float_type sin0 = std::sin(theta);
+            const float_vec p1RotDir(n1.x * cos0 - n1.y * sin0, n1.x * sin0 + n1.y * cos0);
+            rays.emplace_back(getCentre(), p1RotDir);
+        }
+        return rays;
+    }
+
+    void writeLineSegment(std::ofstream& file) const {
+        file << p1.x << "," << p1.y << "," << p2.x << "," << p2.y << "\n";
+    }
+
+};
+
+// circle
+struct Circle : Geometry {
+
+    float_vec c; float_type r;
+    Circle(const Type& t, const float_vec& c, const float_type& r) : Geometry(Shape::CYLINDRICAL, t), c(c), r(r) {}
+    float_vec getCentre() const override { return c; }
+    float_type getLength() const override { return PI * 2 * r; }
+
+    bool intersect(const Ray& ray, HitInfo& hitInfo, const Type& t) const override {
+        if (type != t) return false;
+        else if (IGNORE_SOURCE && type == Type::SOURCE) return false;
+        else {
+            const float_vec oc = c - ray.o;
+            const float_type hyp2 = dot(oc, oc);
+            if (hyp2 < r * r) return false;
+            const float_type hyp = std::sqrt(hyp2);
+            const float_vec ocDir = oc / hyp;
+            const float_type cos0 = dot(ray.d, ocDir);
+            if (cos0 <= 0) return false;
+            const float_type adj = hyp * cos0;
+            const float_type d2 = hyp2 - adj * adj;
+            if (d2 > r * r) return false;
+            if (d2 == r * r) {
+                hitInfo.l = adj;
+                hitInfo.p = ray.o + hitInfo.l * ray.d;
+            }
+            else if (d2 < r * r) {
+                hitInfo.l = adj - std::sqrt(r * r - d2);
+                hitInfo.p = ray.o + hitInfo.l * ray.d;
+            }
+            hitInfo.n = normalize(hitInfo.p - c);
+            hitInfo.t = type;
+            return true;
+        }
+    }
+
+    Ray sampleMeanRay() const override {
+        const float_type theta = PCG32::rand() * 2 * PI;
+        const float_vec p = c + r * float_vec(std::cos(theta), std::sin(theta));
+        const float_vec n = (p - c) / r;
+        return Ray(p, n);
+    }
+
+    std::pair<Ray, float_type> sampleDiffuseRay() const override {
+        const Ray meanRay = sampleMeanRay();
+        const float_vec n = meanRay.d;
+        const float_type theta = std::asin(2 * PCG32::rand() - 1);
+        const float_type cos0 = std::cos(theta);
+        const float_type sin0 = std::sin(theta);
+        const float_vec rotDir(n.x * cos0 - n.y * sin0, n.x * sin0 + n.y * cos0);
+        return std::pair(Ray(meanRay.o, rotDir), theta * RAD_TO_DEG);
+    }
+
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() const override {
+        std::vector<Ray> p1ExtrRays, p2ExtrRays;
+        for (int degrees = 0; degrees < 360; degrees += 2) {
+            const float_type theta = degrees * DEG_TO_RAD;
+            const float_vec p = c + r * float_vec(std::cos(theta), std::sin(theta));
+            const float_vec n = (p - c) / r;
+            const float_vec p1RotDir(-n.y, n.x);
+            const float_vec p2RotDir(n.y, -n.x);
+            p1ExtrRays.emplace_back(p, p1RotDir);
+            p2ExtrRays.emplace_back(p, p2RotDir);
+        }
+        return std::pair(p1ExtrRays, p2ExtrRays);
+    }
+
+    std::vector<Ray> generateFinalPlotRays() const override {
+        std::vector<Ray> rays;
+        for (int degrees = -170; degrees <= 170; degrees += 20) {
+            const float_type theta = degrees * DEG_TO_RAD;
+            const float_type cos0 = std::cos(theta);
+            const float_type sin0 = std::sin(theta);
+            const float_vec n = float_vec(-1, 0);
+            const float_vec rotDir(n.x * cos0 - n.y * sin0, n.x * sin0 + n.y * cos0);
+            rays.emplace_back(getCentre() * rotDir, rotDir);
+        }
+        return rays;
+    }
+
+};
+
+// parabola
+struct Parabola : Geometry {
+
+    float_type a, c;
+    Parabola(const Type& t, const float_type& a, const float_type& c) : Geometry(Shape::PARABOLIC, t), a(a), c(c) {}
+    float_vec getCentre() const override { return float_vec(c, 0); }
+    float_type getLength() const override { return float_type(0); }
+
+    bool intersect(const Ray& ray, HitInfo& hitInfo, const Type& t) const override {
+        if (type != t) return false;
+        else if (IGNORE_SOURCE && type == Type::SOURCE) return false;
+        else {
+            if (ray.d.x == -1 || ray.d.x == -1 || ray.d.y == 0) {
+                const float_type s = (a * ray.o.y * ray.o.y - ray.o.x + c) / ray.d.x;
+                if (s < 0) return false;
+                hitInfo.l = s;
+                hitInfo.p = ray.o + hitInfo.l * ray.d;
+                hitInfo.n = normalize(float_vec(-1, 2 * a * hitInfo.p.y));
+                hitInfo.t = type;
+                return true;
+            }
+            const float_type A = a * ray.d.y * ray.d.y;
+            const float_type B = 2 * a * ray.o.y * ray.d.y - ray.d.x;
+            const float_type C = a * ray.o.y * ray.o.y + c - ray.o.x;
+            const float_type D = B * B - 4 * A * C;
+            if (D <= 0 || A == 0) return false;
+            const float_type invA = 1 / A;
+            const float_type sqrtD = std::sqrt(D);
+            const float_type s1 = 0.5 * (-B - std::copysign(1, B) * sqrtD) * invA;
+            const float_type s2 = C * invA / s1;
+            float_type s;
+            if (s1 >= 0 && s2 >= 0) s = std::min(s1, s2);
+            else if (s1 >= 0) s = s1;
+            else if (s2 >= 0) s = s2;
+            else return false;
+            hitInfo.l = s;
+            hitInfo.p = ray.o + hitInfo.l * ray.d;
+            if (hitInfo.p.y > 0) hitInfo.n = normalize(float_vec(1, -2 * a * hitInfo.p.y));
+            else hitInfo.n = normalize(float_vec(-1, 2 * a * hitInfo.p.y));
+            hitInfo.t = type;
+            return true;
+        }
+    }
+
+    Ray sampleMeanRay() const override {
+        return Ray(float_vec(0, 0), float_vec(0, 0));
+    }
+
+    std::pair<Ray, float_type> sampleDiffuseRay() const override {
+        return std::pair(Ray(float_vec(0, 0), float_vec(0, 0)), float_type(0));
+    }
+
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() const override {
+        return std::pair(std::vector<Ray>(0), std::vector<Ray>(0));
+    }
+
+    std::vector<Ray> generateFinalPlotRays() const override {
+        return std::vector<Ray>();
+    }
+
+};
+
+// ellipse
+struct Ellipse : Geometry {
+
+    float_type f1, L, saa, sab;
+    Ellipse(const Type& t, const float_type& f1, const float_type& L) : Geometry(Shape::ELLIPTICAL, t), f1(f1), L(L), saa(f1 + L / 2), sab(std::sqrt(f1 * (f1 + L))) {}
+    float_vec getCentre() const override { return float_vec(-L / 2, 0); }
+    float_type getLength() const override { return float_type(0); }
+
+    bool intersect(const Ray& ray, HitInfo& hitInfo, const Type& t) const override {
+        if (type != t) return false;
+        else if (IGNORE_SOURCE && type == Type::SOURCE) return false;
+        else {
+            const float_vec centre = float_vec(-L / 2, 0);
+            const float_vec oc = ray.o - centre;
+            float_type inv_a2 = 1 / (saa * saa);
+            float_type inv_b2 = 1 / (sab * sab);
+            const float_type a = ray.d.x * ray.d.x * inv_a2 + ray.d.y * ray.d.y * inv_b2;
+            const float_type b = 2 * (oc.x * ray.d.x * inv_a2 + oc.y * ray.d.y * inv_b2);
+            const float_type c = oc.x * oc.x * inv_a2 + oc.y * oc.y * inv_b2 - 1;
+            const float_type d = b * b - 4 * a * c;
+            if (d <= 0) return false;
+            const float_type inv_a = 1 / a;
+            const float_type sqrt_d = std::sqrt(d);
+            const float_type s1 = 0.5 * (-b - std::copysign(1, b) * sqrt_d) * inv_a;
+            const float_type s2 = c * inv_a / s1;
+            float_type s;
+            if (s1 >= 0 && s2 >= 0) s = std::min(s1, s2);
+            else if (s1 >= 0) s = s1;
+            else if (s2 >= 0) s = s2;
+            else return false;
+            hitInfo.l = s;
+            hitInfo.p = ray.o + hitInfo.l * ray.d;
+            hitInfo.n = -normalize(float_vec(hitInfo.p.x - (-L / 2), (saa * saa / (sab * sab)) * hitInfo.p.y));
+            hitInfo.t = type;
+            return true;
+        }
+    }
+
+    Ray sampleMeanRay() const override {
+        return Ray(float_vec(0, 0), float_vec(0, 0));
+    }
+
+    std::pair<Ray, float_type> sampleDiffuseRay() const override {
+        return std::pair(Ray(float_vec(0, 0), float_vec(0, 0)), float_type(0));
+    }
+
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() const override {
+        return std::pair(std::vector<Ray>(0), std::vector<Ray>(0));
+    }
+
+    std::vector<Ray> generateFinalPlotRays() const override {
+        return std::vector<Ray>();
+    }
+
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// mirror
+struct Mirror : Geometry {
+
+    std::vector<LineSegment> segments;
+    Mirror(const Type& t) : Geometry(Shape::CONSTRUCTED, t) {}
+    void reset() { segments.clear(); }
+    float_vec getCentre() const override { return float_vec(0, 0); }
+
+    float_type getLength() const override {
+        float_type l(0);
+        for (const auto& s : segments) l += s.getLength();
+        return l;
+    }
+
+    void addSegment(const Type& t, const float_vec& p1, const float_vec& p2, const float_vec& n1, const float_vec& n2) {
+        segments.emplace_back(t, p1, p2, n1, n2);
+    }
+
+    bool intersect(const Ray& ray, HitInfo& hitInfo, const Type& t) const override {
+        if (type != t) return false;
+        for (auto s : segments) if (s.intersect(ray, hitInfo, t)) return true;
+        return false;
+    }
+
+    Ray sampleMeanRay() const override {
+        return segments[PCG32::rand() * segments.size()].sampleMeanRay();
+    }
+
+    std::pair<Ray, float_type> sampleDiffuseRay() const override {
+        return segments[PCG32::rand() * segments.size()].sampleDiffuseRay();
+    }
+
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() const override {
+        return std::pair(std::vector<Ray>(), std::vector<Ray>());
+    }
+
+    std::vector<Ray> generateFinalPlotRays() const override {
+        return std::vector<Ray>();
+    }
+
+    void writeMirror(std::ofstream& file) const {
+        for (auto s : segments) {
+            s.writeLineSegment(file);
+        }
+    }
+
+};
+
+// two-mirror concentrator
+struct TwoMirrorConcentrator : Geometry {
+
+    Mirror m1a = Mirror(Type::MIRROR1);
+    Mirror m1b = Mirror(Type::MIRROR1);
+    Mirror m2a = Mirror(Type::MIRROR2);
+    Mirror m2b = Mirror(Type::MIRROR2);
+    Mirror barrier = Mirror(Type::BARRIER);
+
+    TwoMirrorConcentrator() : Geometry(Shape::CONSTRUCTED, Type::CONCENTRATOR) {}
+
+    void reset() {
+        m1a.reset();
+        m1b.reset();
+        m2a.reset();
+        m2b.reset();
+        barrier.reset();
+    }
+
+    float_vec getCentre() const override {
+        return float_vec(0, 0);
+    }
+
+    float_type getLength() const override {
+        return m1a.getLength() + m1b.getLength() + m2a.getLength() + m2b.getLength();
+    }
+
+    void buildFin(const bool& inv, const float_type& f1, const float_type& L, const float_type& f2, const float_type& da, const float_type& a_max, const float_type& w) {
+
+        // reset
+        reset();
+
+        // initial conditions
+        const auto& Sa = [=](const float_type& alpha) {
+            if (FLAT_SOURCE) return std::cos(alpha);
+            else return float_type(1);
+        };
+        const auto& SB = [=](const float_type& beta) {
+            if (FLAT_SOURCE && FLAT_TARGET) return std::cos(beta) * w;
+            if (FLAT_SOURCE && !FLAT_TARGET) return ONE_OVER_PI;
+            if (!FLAT_SOURCE && FLAT_TARGET) return PI * std::cos(beta);
+            return float_type(1);
+        };
+        float_type a(0), B(0), r1(f1), r2(f2);
+        float_vec p1(-f1 - L, 0), p2(f2, 0), n1(1, 0), n2(-1, 0);
+        const float_type F(2 * f1 + L + 2 * f2);
+        const float_vec source(-L, 0), target(0, 0);
+
+        // numerical integration
+        while (a < a_max) {
+
+            // precomputation
+            const float_type cosa(std::cos(a)), sina(std::sin(a));
+            const float_type cosB(std::cos(B)), sinB(std::sin(B));
+            const float_type cosaB(std::cos(a + B)), sinaB(std::sin(a + B));
+
+            // M1
+            const float_type a_new = a + da;
+            const float_type dr1 = (r1 * r2 * sinaB + L * r1 * sina) / (r2 * cosaB + L * cosa - r2 + F) * da;
+            const float_type r1_new = r1 + dr1;
+            const float_vec p1_new(-r1_new * std::cos(a_new) - L, r1_new * std::sin(a_new));
+
+            // M2
+            const float_type dB = (inv ? -1 : 1) * Sa(a) / SB(B) * da;
+            const float_type B_new = B + dB;
+            const float_type dr2 = (r1 * r2 * sinaB + L * r2 * sinB) / (r1 * cosaB + L * cosB - r1 + F) * dB;
+            const float_type r2_new = r2 + dr2;
+            const float_vec p2_new(r2_new * std::cos(B_new), r2_new * std::sin(B_new));
+
+            // ray directions
+            const float_vec v1((p1_new - source) / r1_new);
+            const float_vec u((p2_new - p1_new) / (F - r1_new - r2_new));
+            const float_vec v2((target - p2_new) / r2_new);
+
+            // normals
+            const float_vec n1_new(normalize(u - v1));
+            const float_vec n2_new(normalize(v2 - u));
+
+            // store coordinates and normals
+            m1a.addSegment(m1a.type, p1, p1_new, n1, n1_new);
+            m1b.addSegment(m1b.type, float_vec(p1.x, -p1.y), float_vec(p1_new.x, -p1_new.y), float_vec(n1.x, -n1.y), float_vec(n1_new.x, -n1_new.y));
+            m2a.addSegment(m2a.type, p2, p2_new, n2, n2_new);
+            m2b.addSegment(m2b.type, float_vec(p2.x, -p2.y), float_vec(p2_new.x, -p2_new.y), float_vec(n2.x, -n2.y), float_vec(n2_new.x, -n2_new.y));
+
+            // update
+            a = a_new;
+            r1 = r1_new;
+            p1 = p1_new;
+            B = B_new;
+            r2 = r2_new;
+            p2 = p2_new;
+            n1 = n1_new;
+            n2 = n2_new;
+        }
+
+        // build barrier
+        buildBarrier();
+    }
+
+    void buildBarrier() {
+        const float_type x_max = 1.25 * std::max(std::abs(m1a.segments.front().p1.x), std::abs(m2a.segments.front().p1.x));
+        const float_type y_max = 1.25 * std::max(std::abs(m1a.segments.back().p2.y), std::abs(m2a.segments.back().p2.y));
+        const float_vec bottomRight(x_max, -y_max), topRight(x_max, y_max), topLeft(-x_max, y_max), bottomLeft(-x_max, -y_max);
+        barrier.addSegment(barrier.type, bottomRight, topRight, float_vec(-1, 0), float_vec(-1, 0));
+        barrier.addSegment(barrier.type, topRight, topLeft, float_vec(0, -1), float_vec(0, -1));
+        barrier.addSegment(barrier.type, topLeft, bottomLeft, float_vec(1, 0), float_vec(1, 0));
+        barrier.addSegment(barrier.type, bottomLeft, bottomRight, float_vec(0, 1), float_vec(0, 1));
+    }
+
+    bool intersect(const Ray& ray, HitInfo& hitInfo, const Type& t) const override {
+        if (m1a.intersect(ray, hitInfo, t)) {
+            hitInfo.t = m1a.type;
+            return true;
+        }
+        if (m1b.intersect(ray, hitInfo, t)) {
+            hitInfo.t = m1b.type;
+            return true;
+        }
+        if (m2a.intersect(ray, hitInfo, t)) {
+            hitInfo.t = m2a.type;
+            return true;
+        }
+        if (m2b.intersect(ray, hitInfo, t)) {
+            hitInfo.t = m2b.type;
+            return true;
+        }
+        if (barrier.intersect(ray, hitInfo, t)) {
+            hitInfo.t = barrier.type;
+            return true;
+        }
+        return false;
+    }
+
+    Ray sampleMeanRay() const override {
+        const float_type Randy = PCG32::rand();
+        if (Randy < 0.25) return m1a.sampleMeanRay();
+        if (0.25 <= Randy && Randy < 0.5) return m1b.sampleMeanRay();
+        if (0.5 <= Randy && Randy < 0.75) return m2a.sampleMeanRay();
+        return m2b.sampleMeanRay();
+    }
+
+    std::pair<Ray, float_type> sampleDiffuseRay() const override {
+        const float_type Randolf = PCG32::rand();
+        if (Randolf < 0.25) return m1a.sampleDiffuseRay();
+        if (0.25 <= Randolf && Randolf < 0.5) return m1b.sampleDiffuseRay();
+        if (0.5 <= Randolf && Randolf < 0.75) return m2a.sampleDiffuseRay();
+        return m2b.sampleDiffuseRay();
+    }
+
+    std::pair<std::vector<Ray>, std::vector<Ray>> generateExtremeRays() const override {
+        return std::pair(std::vector<Ray>(), std::vector<Ray>());
+    }
+
+    std::vector<Ray> generateFinalPlotRays() const override {
+        return std::vector<Ray>();
+    }
+
+    void writeTwoMirrorConcentrator(const std::string& filePath) const {
+        std::ofstream file;
+        file.open(filePath + "mirror1a.csv");
+        m1a.writeMirror(file);
+        file.close();
+        file.open(filePath + "mirror1b.csv");
+        m1b.writeMirror(file);
+        file.close();
+        file.open(filePath + "mirror2a.csv");
+        m2a.writeMirror(file);
+        file.close();
+        file.open(filePath + "mirror2b.csv");
+        m2b.writeMirror(file);
+        file.close();
+    }
+
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// design
+struct Design {
+
+    Geometry* source;
+    Geometry* target;
+    std::vector<Geometry*> geometries;
+
+    void addGeometry(Geometry* const g) {
+        geometries.push_back(g);
+        if (g->type == Type::SOURCE) source = g;
+        else if (g->type == Type::TARGET) target = g;
+    }
+
+    bool intersect(const Ray& ray, HitInfo& minHitInfo, const Type& type) const {
+        bool hit = false;
+        HitInfo tempMinHitInfo;
+        minHitInfo.l = std::numeric_limits<float_type>::max();
+        for (const auto& geometry : geometries) {
+            if ((*geometry).intersect(ray, tempMinHitInfo, type)) {
+                if (tempMinHitInfo.l < minHitInfo.l) {
+                    hit = true;
+                    minHitInfo = tempMinHitInfo;
+                }
+            }
+        }
+        return hit;
+    }
+
+    void traceDiffuseRays(const std::string& filePath, const int& numRays) {
+        std::vector<std::vector<Path>> threadVectors(omp_get_max_threads());
+        #pragma omp parallel for schedule(dynamic, 1)
+        for (int i = 0; i < numRays; ++i) {
+            int threadID = omp_get_thread_num();
+            Path path;
+            const Ray r1 = source->sampleDiffuseRay().first;
+            path.addVertex(r1.o);
+            if (HitInfo h1; intersect(r1, h1, Type::MIRROR1)) {
+                path.addVertex(h1.p);
+                const Ray r2 = Ray(h1.p, normalize(r1.d - 2 * dot(r1.d, h1.n) * h1.n));
+                if (HitInfo h2; intersect(r2, h2, Type::MIRROR2)) {
+                    path.addVertex(h2.p);
+                    const Ray r3 = Ray(h2.p, normalize(r2.d - 2 * dot(r2.d, h2.n) * h2.n));
+                    if (HitInfo h3; intersect(r3, h3, Type::TARGET)) path.addVertex(h3.p);
+                }
+            }
+            threadVectors[threadID].push_back(path);
+        }
+        std::ofstream file;
+        std::vector<Path> paths;
+        for (const auto& v : threadVectors) paths.insert(paths.end(), v.begin(), v.end());
+        file.open(filePath + "diffuse.csv");
+        for (const auto& p : paths) p.writePath(file);
+        file.close();
+    }
+
+    void traceExtremeRays(const std::string& filePath) const {
+        auto extremeRays = source->generateExtremeRays();
+        std::vector<std::vector<Path>> threadVectors1(omp_get_max_threads());
+        #pragma omp parallel for schedule(dynamic, 1)
+        for (const auto& ray : extremeRays.first) {
+            int threadID = omp_get_thread_num();
+            Path path;
+            path.addVertex(ray.o);
+            const Ray r1 = ray;
+            if (HitInfo h1; intersect(r1, h1, Type::MIRROR1)) {
+                path.addVertex(h1.p);
+                const Ray r2 = Ray(h1.p, normalize(r1.d - 2 * dot(r1.d, h1.n) * h1.n));
+                if (HitInfo h2; intersect(r2, h2, Type::MIRROR2)) {
+                    path.addVertex(h2.p);
+                    const Ray r3 = Ray(h2.p, normalize(r2.d - 2 * dot(r2.d, h2.n) * h2.n));
+                    if (HitInfo h3; intersect(r3, h3, Type::BARRIER)) path.addVertex(h3.p);
+                }
+            }
+            threadVectors1[threadID].push_back(path);
+        }
+        std::vector<Path> paths1;
+        for (const auto& v : threadVectors1) paths1.insert(paths1.end(), v.begin(), v.end());
+        std::vector<std::vector<Path>> threadVectors2(omp_get_max_threads());
+        #pragma omp parallel for schedule(dynamic, 1)
+        for (const auto& ray : extremeRays.second) {
+            int threadID = omp_get_thread_num();
+            Path path;
+            path.addVertex(ray.o);
+            const Ray r1 = ray;
+            if (HitInfo h1; intersect(r1, h1, Type::MIRROR1)) {
+                path.addVertex(h1.p);
+                const Ray r2 = Ray(h1.p, normalize(r1.d - 2 * dot(r1.d, h1.n) * h1.n));
+                if (HitInfo h2; intersect(r2, h2, Type::MIRROR2)) {
+                    path.addVertex(h2.p);
+                    const Ray r3 = Ray(h2.p, normalize(r2.d - 2 * dot(r2.d, h2.n) * h2.n));
+                    if (HitInfo h3; intersect(r3, h3, Type::BARRIER)) path.addVertex(h3.p);
+                }
+            }
+            threadVectors2[threadID].push_back(path);
+        }
+        std::vector<Path> paths2;
+        for (const auto& v : threadVectors2) paths2.insert(paths2.end(), v.begin(), v.end());
+        std::ofstream file;
+        file.open(filePath + "extreme1.csv");
+        for (const auto& path : paths1) path.writeFinalSegment(file);
+        file.close();
+        file.open(filePath + "extreme2.csv");
+        for (const auto& path : paths2) path.writeFinalSegment(file);
+        file.close();
+    }
+
+    void traceExtremeEllipse(const std::string& filePath) const {
+        auto extremeRays = source->generateExtremeRays();
+        std::vector<std::vector<Path>> threadVectors1(omp_get_max_threads());
+        #pragma omp parallel for schedule(dynamic, 1)
+        for (const auto& ray : extremeRays.first) {
+            int threadID = omp_get_thread_num();
+            Path path;
+            path.addVertex(ray.o);
+            const Ray r1 = ray;
+            if (HitInfo h1; intersect(r1, h1, Type::MIRROR1)) {
+                path.addVertex(h1.p);
+                const Ray r2 = Ray(h1.p, normalize(r1.d - 2 * dot(r1.d, h1.n) * h1.n));
+                if (HitInfo h2; intersect(r2, h2, Type::BARRIER)) path.addVertex(h2.p);
+            }
+            threadVectors1[threadID].push_back(path);
+        }
+        std::vector<Path> paths1;
+        for (const auto& v : threadVectors1) paths1.insert(paths1.end(), v.begin(), v.end());
+        std::vector<std::vector<Path>> threadVectors2(omp_get_max_threads());
+        #pragma omp parallel for schedule(dynamic, 1)
+        for (const auto& ray : extremeRays.second) {
+            int threadID = omp_get_thread_num();
+            Path path;
+            path.addVertex(ray.o);
+            const Ray r1 = ray;
+            if (HitInfo h1; intersect(r1, h1, Type::MIRROR1)) {
+                path.addVertex(h1.p);
+                const Ray r2 = Ray(h1.p, normalize(r1.d - 2 * dot(r1.d, h1.n) * h1.n));
+                if (HitInfo h2; intersect(r2, h2, Type::BARRIER)) path.addVertex(h2.p);
+            }
+            threadVectors2[threadID].push_back(path);
+        }
+        std::vector<Path> paths2;
+        for (const auto& v : threadVectors2) paths2.insert(paths2.end(), v.begin(), v.end());
+        std::ofstream file;
+        file.open(filePath + "extreme1.csv");
+        for (const auto& path : paths1) path.writeFinalSegment(file);
+        file.close();
+        file.open(filePath + "extreme2.csv");
+        for (const auto& path : paths2) path.writeFinalSegment(file);
+        file.close();
+    }
+
+    void tracePhaseSpace(const std::string& filePath, const int& numRays) const {
+        std::vector<std::vector<std::vector<float_type>>> threadVectors(omp_get_max_threads());
+        #pragma omp parallel for schedule(dynamic, 1)
+        for (int i = 0; i < numRays; ++i) {
+            int threadID = omp_get_thread_num();
+            auto sample = source->sampleDiffuseRay();
+            const Ray r1 = sample.first;
+            const float_type source_angle = sample.second;
+            const float_vec source_pos = r1.o - source->getCentre();
+            if (HitInfo h1; intersect(r1, h1, Type::MIRROR1)) {
+                const Ray r2 = Ray(h1.p, normalize(r1.d - 2 * dot(r1.d, h1.n) * h1.n));
+                if (HitInfo h2; intersect(r2, h2, Type::MIRROR2)) {
+                    const Ray r3 = Ray(h2.p, normalize(r2.d - 2 * dot(r2.d, h2.n) * h2.n));
+                    if (HitInfo h3; intersect(r3, h3, Type::TARGET)) {
+                        if (source->shape == Shape::FLAT && target->shape == Shape::FLAT) {
+                            std::vector<float_type> temp = {cross(-r3.d, h3.n), h3.p.y, std::sin(source_angle), source_pos.y};
+                            threadVectors[threadID].emplace_back(std::move(temp));
+                        }
+                        else if (source->shape == Shape::CYLINDRICAL && target->shape == Shape::CYLINDRICAL) {
+                            float_type source_theta = std::atan2(source_pos.y, -source_pos.x);
+                            if (source_theta < 0) source_theta += 2 * PI;
+                            float_type target_theta = std::atan2(h3.p.y, h3.p.x);
+                            if (target_theta < 0) target_theta += 2 * PI;
+                            std::vector<float_type> temp = {cross(-r3.d, h3.n), target_theta * RAD_TO_DEG, std::sin(source_angle), source_theta * RAD_TO_DEG};
+                            threadVectors[threadID].emplace_back(std::move(temp));
+                        }
+                        else if (source->shape == Shape::FLAT && target->shape == Shape::CYLINDRICAL) {
+                            float_type target_theta = std::atan2(h3.p.y, h3.p.x);
+                            if (target_theta < 0) target_theta += 2 * PI;
+                            std::vector<float_type> temp = {cross(-r3.d, h3.n), target_theta * RAD_TO_DEG, std::sin(source_angle), source_pos.y};
+                            threadVectors[threadID].emplace_back(std::move(temp));
+                        }
+                        else if (source->shape == Shape::CYLINDRICAL && target->shape == Shape::FLAT) {
+                            float_type source_theta = std::atan2(source_pos.y, -source_pos.x);
+                            if (source_theta < 0) source_theta += 2 * PI;
+                            std::vector<float_type> temp = {cross(-r3.d, h3.n), h3.p.y, std::sin(source_angle), source_theta * RAD_TO_DEG};
+                            threadVectors[threadID].emplace_back(std::move(temp));
+                        }
+                    }
+                }
+            }
+        }
+        std::ofstream file;
+        std::vector<std::vector<float_type>> data;
+        for (const auto& v : threadVectors) data.insert(data.end(), v.begin(), v.end());
+        file.open(filePath + "phase.csv");
+        for (const auto& d : data) file << d[0] << "," << d[1] << "," << d[2] << "," << d[3] << "\n";
+        file.close();
+    }
+
+    void tracePhaseEllipse(const std::string& filePath, const int& numRays) const {
+        std::vector<std::vector<std::vector<float_type>>> threadVectors(omp_get_max_threads());
+        #pragma omp parallel for schedule(dynamic, 1)
+        for (int i = 0; i < numRays; ++i) {
+            int threadID = omp_get_thread_num();
+            auto sample = source->sampleDiffuseRay();
+            const Ray r1 = sample.first;
+            const float_type source_angle = sample.second;
+            const float_vec source_pos = r1.o - source->getCentre();
+            if (HitInfo h1; intersect(r1, h1, Type::MIRROR1)) {
+                const Ray r2 = Ray(h1.p, normalize(r1.d - 2 * dot(r1.d, h1.n) * h1.n));
+                if (HitInfo h2; intersect(r2, h2, Type::TARGET)) {
+                    if (source->shape == Shape::FLAT && target->shape == Shape::FLAT) {
+                        std::vector<float_type> temp = {cross(-r2.d, h2.n), h2.p.y, std::sin(source_angle), source_pos.y};
+                        threadVectors[threadID].emplace_back(std::move(temp));
+                    }
+                    else if (source->shape == Shape::CYLINDRICAL && target->shape == Shape::CYLINDRICAL) {
+                        float_type source_theta = std::atan2(source_pos.y, -source_pos.x);
+                        if (source_theta < 0) source_theta += 2 * PI;
+                        float_type target_theta = std::atan2(h2.p.y, h2.p.x);
+                        if (target_theta < 0) target_theta += 2 * PI;
+                        std::vector<float_type> temp = {cross(-r2.d, h2.n), target_theta * RAD_TO_DEG, std::sin(source_angle), source_theta * RAD_TO_DEG};
+                        threadVectors[threadID].emplace_back(std::move(temp));
+                    }
+                    else if (source->shape == Shape::FLAT && target->shape == Shape::CYLINDRICAL) {
+                        float_type target_theta = std::atan2(h2.p.y, h2.p.x);
+                        if (target_theta < 0) target_theta += 2 * PI;
+                        std::vector<float_type> temp = {cross(-r2.d, h2.n), target_theta * RAD_TO_DEG, std::sin(source_angle), source_pos.y};
+                        threadVectors[threadID].emplace_back(std::move(temp));
+                    }
+                    else if (source->shape == Shape::CYLINDRICAL && target->shape == Shape::FLAT) {
+                        float_type source_theta = std::atan2(source_pos.y, -source_pos.x);
+                        if (source_theta < 0) source_theta += 2 * PI;
+                        std::vector<float_type> temp = {cross(-r2.d, h2.n), h2.p.y, std::sin(source_angle), source_theta * RAD_TO_DEG};
+                        threadVectors[threadID].emplace_back(std::move(temp));
+                    }
+                }
+            }
+        }
+        std::ofstream file;
+        std::vector<std::vector<float_type>> data;
+        for (const auto& v : threadVectors) data.insert(data.end(), v.begin(), v.end());
+        file.open(filePath + "phase.csv");
+        for (const auto& d : data) file << d[0] << "," << d[1] << "," << d[2] << "," << d[3] << "\n";
+        file.close();
+    }
+
+    float_type traceHitData(const int& numRays) const {
+        std::vector<int> threadCounts(omp_get_max_threads());
+        #pragma omp parallel for schedule(dynamic, 1)
+        for (int i = 0; i < numRays; ++i) {
+            int threadID = omp_get_thread_num();
+            const Ray r1 = source->sampleDiffuseRay().first;
+            if (HitInfo h1; intersect(r1, h1, Type::MIRROR1)) {
+                const Ray r2 = Ray(h1.p, normalize(r1.d - 2 * dot(r1.d, h1.n) * h1.n));
+                if (HitInfo h2; intersect(r2, h2, Type::MIRROR2)) {
+                    const Ray r3 = Ray(h2.p, normalize(r2.d - 2 * dot(r2.d, h2.n) * h2.n));
+                    if (HitInfo h3; intersect(r3, h3, Type::TARGET)) threadCounts[threadID] += 1;
+                }
+            }
+        }
+        int finalCount = 0;
+        for (const auto& count : threadCounts) finalCount += count;
+        return static_cast<float_type>(finalCount) / static_cast<float_type>(numRays);
+    }
+
+    float_type traceHitEllipse(const int& numRays) const {
+        std::vector<int> threadCounts(omp_get_max_threads());
+        #pragma omp parallel for schedule(dynamic, 1)
+        for (int i = 0; i < numRays; ++i) {
+            int threadID = omp_get_thread_num();
+            const Ray r1 = source->sampleDiffuseRay().first;
+            if (HitInfo h1; intersect(r1, h1, Type::MIRROR1)) {
+                const Ray r2 = Ray(h1.p, normalize(r1.d - 2 * dot(r1.d, h1.n) * h1.n));
+                if (HitInfo h2; intersect(r2, h2, Type::TARGET)) threadCounts[threadID] += 1;
+            }
+        }
+        int finalCount = 0;
+        for (const auto& count : threadCounts) finalCount += count;
+        return static_cast<float_type>(finalCount) / static_cast<float_type>(numRays);
+    }
+
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// main
+int main(int argc, char* argv[]) {
+
+
+
+    // two-mirror concentrator
+    if (TWO_MIRROR_CONCENTRATOR) {
+
+        // output
+        std::string outputDataPath = "data2mc/";
+        if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
+        std::ofstream file;
+
+        // input
+        const bool inv(false);
+        const float_type f1(1), L(4), f2(2), da(0.000001), a_max(90 * DEG_TO_RAD), w(1), hl(f1 / 1000);
+        file.open(outputDataPath + "input.csv");
+        file << FLAT_SOURCE << "," << FLAT_TARGET << "," << inv << "," << hl << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "," << w << "\n";
+        file.close();
+
+        // two-mirror concentrator
+        TwoMirrorConcentrator tmc;
+        tmc.buildFin(inv, f1, L, f2, da, a_max, w);
+        tmc.writeTwoMirrorConcentrator(outputDataPath);
+
+        // design
+        Design design;
+        design.addGeometry(&tmc);
+        LineSegment flatSource(Type::SOURCE, float_vec(-L, -hl), float_vec(-L, hl), float_vec(-1, 0), float_vec(-1, 0));
+        Circle cylindricalSource(Type::SOURCE, float_vec(-L, 0), hl);
+        const float_type vert = 1; LineSegment flatTarget(Type::TARGET, float_vec(0, -hl * vert), float_vec(0, hl * vert), float_vec(1, 0), float_vec(1, 0));
+        Circle cylindricalTarget(Type::TARGET, float_vec(0, 0), hl * w);
+        if (FLAT_SOURCE) {
+            design.addGeometry(&flatSource);
+            design.traceExtremeRays(outputDataPath); // caustics
+            if (FLAT_TARGET) design.addGeometry(&flatTarget);
+            else {
+                cylindricalTarget.r /= PI;
+                design.addGeometry(&cylindricalTarget);
+            }
+        }
+        else {
+            design.addGeometry(&cylindricalSource);
+            design.traceExtremeRays(outputDataPath); // caustics
+            if (FLAT_TARGET) {
+                flatTarget.p1.y *= PI;
+                flatTarget.p2.y *= PI;
+                design.addGeometry(&flatTarget);
+            }
+            else design.addGeometry(&cylindricalTarget);
+        }
+
+        // caustics w/ intersections
+        // design.traceExtremeRays(outputDataPath);
+
+        // phase
+        // design.tracePhaseSpace(outputDataPath, 100000);
+
+        // hits
+        // const int numberOfDesigns = 10;
+        // std::vector<Design> designs(numberOfDesigns);
+        // std::vector<LineSegment> flatTargets;
+        // std::vector<Circle> cylindricalTargets;
+        // float_type increment = 2 * hl / numberOfDesigns;
+        // if (FLAT_SOURCE && !FLAT_TARGET) increment /= PI;
+        // else if (!FLAT_SOURCE && FLAT_TARGET) increment *= PI;
+        // for (int i = 0; i < numberOfDesigns; ++i) {
+        //     if (FLAT_TARGET) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
+        //     else cylindricalTargets.emplace_back(Type::TARGET, float_vec(0, 0), (i + 1) * increment);
+        // }
+        // for (int i = 0; i < numberOfDesigns; ++i) {
+        //     if (FLAT_SOURCE) designs[i].addGeometry(&flatSource);
+        //     else designs[i].addGeometry(&cylindricalSource);
+        //     if (FLAT_TARGET) designs[i].addGeometry(&flatTargets[i]);
+        //     else designs[i].addGeometry(&cylindricalTargets[i]);
+        //     designs[i].addGeometry(&tmc);
+        // }
+        // std::vector<float_vec> hitData;
+        // const int numberOfTrials = 1;
+        // const int numberOfRays = 10000;
+        // for (const auto& d : designs) for (int i = 0; i < numberOfTrials; ++i) hitData.emplace_back(d.target->getLength() / d.source->getLength(), d.traceHitData(numberOfRays));
+        // file.open(outputDataPath + "hits.csv");
+        // for (const auto& p : hitData) file << p.x << "," << p.y << "\n";
+        // file.close();
+    }
+
+
+
+    // parabolic concentrator
+    if (PARABOLIC_CONCENTRATOR) {
+
+        // output
+        std::string outputDataPath = "datapara/";
+        if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
+        std::ofstream file;
+
+        // input
+        const float_type f1(1), L(4), f2(2), hl(f1 / 1000);
+        file.open(outputDataPath + "input.csv");
+        file << FLAT_SOURCE << "," << FLAT_TARGET << "," << hl << "," << f1 << "," << L << "," << f2 << "\n";
+        file.close();
+
+        // parabolas
+        Parabola Param(Type::MIRROR1, 1 / (4 * f1), -f1 - L);
+        Parabola Parker(Type::MIRROR2, -1 / (4 * f2), f2);
+        
+        // barrier
+        const float_type size = (f1 + L + f2) * 2;
+        const float_vec bottomRight(size, -size), topRight(size, size), topLeft(-size, size), bottomLeft(-size, -size);
+        LineSegment rightBarrier(Type::BARRIER, bottomRight, topRight, float_vec(-1, 0), float_vec(-1, 0));
+        LineSegment topBarrier(Type::BARRIER, topRight, topLeft, float_vec(0, -1), float_vec(0, -1));
+        LineSegment leftBarrier(Type::BARRIER, topLeft, bottomLeft, float_vec(1, 0), float_vec(1, 0));
+        LineSegment bottomBarrier(Type::BARRIER, bottomLeft, bottomRight, float_vec(0, 1), float_vec(0, 1));
+
+        // source and target
+        LineSegment flatSource(Type::SOURCE, float_vec(-L, -hl), float_vec(-L, hl), float_vec(-1, 0), float_vec(-1, 0));
+        Circle cylindricalSource(Type::SOURCE, float_vec(-L, 0), hl);
+        const float_type vert = 2; LineSegment flatTarget(Type::TARGET, float_vec(0, -hl * vert), float_vec(0, hl * vert), float_vec(1, 0), float_vec(1, 0));
+        Circle cylindricalTarget(Type::TARGET, float_vec(0, 0), hl);
+
+        // set up system
+        Design design;
+        design.addGeometry(&Param);
+        design.addGeometry(&Parker);
+        design.addGeometry(&rightBarrier);
+        design.addGeometry(&topBarrier);
+        design.addGeometry(&leftBarrier);
+        design.addGeometry(&bottomBarrier);
+        if (FLAT_SOURCE) {
+            design.addGeometry(&flatSource);
+            design.traceExtremeRays(outputDataPath); // caustics
+            if (FLAT_TARGET) design.addGeometry(&flatTarget);
+            else {
+                cylindricalTarget.r /= PI;
+                design.addGeometry(&cylindricalTarget);
+            }
+        }
+        else {
+            design.addGeometry(&cylindricalSource);
+            design.traceExtremeRays(outputDataPath); // caustics
+            if (FLAT_TARGET) {
+                flatTarget.p1.y *= PI;
+                flatTarget.p2.y *= PI;
+                design.addGeometry(&flatTarget);
+            }
+            else design.addGeometry(&cylindricalTarget);
+        }
+
+        // caustics w/ intersections
+        // design.traceExtremeRays(outputDataPath);
+
+        // phase
+        // design.tracePhaseSpace(outputDataPath, 100000);
+
+        // hits
+        // const int numberOfDesigns = 10;
+        // std::vector<Design> designs(numberOfDesigns);
+        // std::vector<LineSegment> flatTargets;
+        // std::vector<Circle> cylindricalTargets;
+        // float_type increment = 2 * hl / numberOfDesigns;
+        // if (FLAT_SOURCE && !FLAT_TARGET) increment /= PI;
+        // else if (!FLAT_SOURCE && FLAT_TARGET) increment *= PI;
+        // for (int i = 0; i < numberOfDesigns; ++i) {
+        //     if (FLAT_TARGET) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
+        //     else cylindricalTargets.emplace_back(Type::TARGET, float_vec(0, 0), (i + 1) * increment);
+        // }
+        // for (int i = 0; i < numberOfDesigns; ++i) {
+        //     if (FLAT_SOURCE) designs[i].addGeometry(&flatSource);
+        //     else designs[i].addGeometry(&cylindricalSource);
+        //     if (FLAT_TARGET) designs[i].addGeometry(&flatTargets[i]);
+        //     else designs[i].addGeometry(&cylindricalTargets[i]);
+        //     designs[i].addGeometry(&Param);
+        //     designs[i].addGeometry(&Parker);
+        // }
+        // std::vector<float_vec> hitData;
+        // const int numberOfTrials = 1;
+        // const int numberOfRays = 10000;
+        // for (const auto& d : designs) for (int i = 0; i < numberOfTrials; ++i) hitData.emplace_back(d.target->getLength() / d.source->getLength(), d.traceHitData(numberOfRays));
+        // file.open(outputDataPath + "hits.csv");
+        // for (const auto& p : hitData) file << p.x << "," << p.y << "\n";
+        // file.close();
+    }
+
+
+
+    // elliptical concentrator
+    if (ELLIPTICAL_CONCENTRATOR) {
+
+        // output
+        std::string outputDataPath = "dataell/";
+        if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
+        std::ofstream file;
+
+        // input
+        const float_type f1(1), L(30), hl(f1 / 1000);
+        file.open(outputDataPath + "input.csv");
+        file << FLAT_SOURCE << "," << FLAT_TARGET << "," << hl << "," << f1 << "," << L << "\n";
+        file.close();
+
+        // ellipse
+        Ellipse Elliot(Type::MIRROR1, f1, L);
+
+        // barrier
+        const float_type size = (2 * f1 + L) * 2;
+        const float_vec bottomRight(size, -size), topRight(size, size), topLeft(-size, size), bottomLeft(-size, -size);
+        LineSegment rightBarrier(Type::BARRIER, bottomRight, topRight, float_vec(-1, 0), float_vec(-1, 0));
+        LineSegment topBarrier(Type::BARRIER, topRight, topLeft, float_vec(0, -1), float_vec(0, -1));
+        LineSegment leftBarrier(Type::BARRIER, topLeft, bottomLeft, float_vec(1, 0), float_vec(1, 0));
+        LineSegment bottomBarrier(Type::BARRIER, bottomLeft, bottomRight, float_vec(0, 1), float_vec(0, 1));
+
+        // source and target
+        LineSegment flatSource(Type::SOURCE, float_vec(-L, -hl), float_vec(-L, hl), float_vec(-1, 0), float_vec(-1, 0));
+        Circle cylindricalSource(Type::SOURCE, float_vec(-L, 0), hl);
+        LineSegment flatTarget(Type::TARGET, float_vec(0, -hl), float_vec(0, hl), float_vec(1, 0), float_vec(1, 0));
+        Circle cylindricalTarget(Type::TARGET, float_vec(0, 0), hl);
+
+        // set up system
+        Design design;
+        design.addGeometry(&Elliot);
+        design.addGeometry(&rightBarrier);
+        design.addGeometry(&topBarrier);
+        design.addGeometry(&leftBarrier);
+        design.addGeometry(&bottomBarrier);
+        if (FLAT_SOURCE) {
+            design.addGeometry(&flatSource);
+            design.traceExtremeEllipse(outputDataPath); // caustics
+            if (FLAT_TARGET) design.addGeometry(&flatTarget);
+            else {
+                cylindricalTarget.r /= PI;
+                design.addGeometry(&cylindricalTarget);
+            }
+        }
+        else {
+            design.addGeometry(&cylindricalSource);
+            design.traceExtremeEllipse(outputDataPath); // caustics
+            if (FLAT_TARGET) {
+                flatTarget.p1.y *= PI;
+                flatTarget.p2.y *= PI;
+                design.addGeometry(&flatTarget);
+            }
+            else design.addGeometry(&cylindricalTarget);
+        }
+
+        // phase
+        design.tracePhaseEllipse(outputDataPath, 100000);
+
+        // hits
+        const int numberOfDesigns = 10;
+        std::vector<Design> designs(numberOfDesigns);
+        std::vector<LineSegment> flatTargets;
+        std::vector<Circle> cylindricalTargets;
+        float_type increment = 2 * hl / numberOfDesigns;
+        if (FLAT_SOURCE && !FLAT_TARGET) increment /= PI;
+        else if (!FLAT_SOURCE && FLAT_TARGET) increment *= PI;
+        for (int i = 0; i < numberOfDesigns; ++i) {
+            if (FLAT_TARGET) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
+            else cylindricalTargets.emplace_back(Type::TARGET, float_vec(0, 0), (i + 1) * increment);
+        }
+        for (int i = 0; i < numberOfDesigns; ++i) {
+            if (FLAT_SOURCE) designs[i].addGeometry(&flatSource);
+            else designs[i].addGeometry(&cylindricalSource);
+            if (FLAT_TARGET) designs[i].addGeometry(&flatTargets[i]);
+            else designs[i].addGeometry(&cylindricalTargets[i]);
+            designs[i].addGeometry(&Elliot);
+        }
+        std::vector<float_vec> hitData;
+        const int numberOfTrials = 1;
+        const int numberOfRays = 10000;
+        for (const auto& d : designs) for (int i = 0; i < numberOfTrials; ++i) hitData.emplace_back(d.target->getLength() / d.source->getLength(), d.traceHitEllipse(numberOfRays));
+        file.open(outputDataPath + "hits.csv");
+        for (const auto& p : hitData) file << p.x << "," << p.y << "\n";
+        file.close();
+    }
+
+
+
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
