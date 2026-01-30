@@ -268,7 +268,7 @@ void build_infinite() {
 
     // input
     const bool inv(true);
-    const float_type L(20), f(1), dB(0.00001), B_max(85 * DEG_TO_RAD);
+    const float_type L(8), f(1), dB(0.00001), B_max(85 * DEG_TO_RAD);
     const float_vec K_in(-1, 0);
     file.open(outputDataPath + "input.csv");
     file << TARGET_SHAPE << "," << ELLIPTICAL_TARGET_X_RADIUS << "," << ELLIPTICAL_TARGET_Y_RADIUS << "," << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";

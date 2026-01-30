@@ -27,3 +27,7 @@ constexpr bool IGNORE_SOURCE = true;
 constexpr Shape TARGET_SHAPE = Shape::ELLIPTICAL;
 constexpr float_type ELLIPTICAL_TARGET_X_RADIUS = 0.001;
 constexpr float_type ELLIPTICAL_TARGET_Y_RADIUS = 0.005;
+
+// S(β)
+constexpr bool SHOULD_WEIGHT_ANGULAR_INTENSITY_DISTRIBUTION = false;
+constexpr float_type ANGULAR_INTENSITY_DISTRIBUTION_WEIGHTING_C = 1;

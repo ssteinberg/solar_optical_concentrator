@@ -42,4 +42,6 @@ struct TwoMirrorConcentrator : Geometry {
     void writeTwoMirrorConcentrator(const std::string& filePath) const;
 
     [[nodiscard]] static float_type getAngularIntensityDistribution(float_type beta);
+
+    [[nodiscard]] static float_type getOmega(float_type beta);
 };

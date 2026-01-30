@@ -389,14 +389,29 @@ void TwoMirrorConcentrator::writeTwoMirrorConcentrator(const std::string &filePa
 }
 
 float_type TwoMirrorConcentrator::getAngularIntensityDistribution(const float_type beta) {
+    float_type angularIntensityDistribution { 0 };
     switch (TARGET_SHAPE) {
         case Shape::FLAT:
-            return std::cos(beta);
+            angularIntensityDistribution = std::cos(beta);
+            break;
         case Shape::CYLINDRICAL:
-            return 1;
+            angularIntensityDistribution = 1;
+            break;
         case Shape::ELLIPTICAL:
-            return std::sqrt(std::pow(ELLIPTICAL_TARGET_X_RADIUS, 2) * std::pow(std::sin(beta), 2) + std::pow(ELLIPTICAL_TARGET_Y_RADIUS, 2) * std::pow(std::cos(beta), 2)) / std::max(ELLIPTICAL_TARGET_X_RADIUS, ELLIPTICAL_TARGET_Y_RADIUS);
+            angularIntensityDistribution = std::sqrt(std::pow(ELLIPTICAL_TARGET_X_RADIUS, 2) * std::pow(std::sin(beta), 2) + std::pow(ELLIPTICAL_TARGET_Y_RADIUS, 2) * std::pow(std::cos(beta), 2)) / std::max(ELLIPTICAL_TARGET_X_RADIUS, ELLIPTICAL_TARGET_Y_RADIUS);
+            break;
         default:
             throw std::invalid_argument("Target type is not supported.");
     }
+
+    if constexpr (SHOULD_WEIGHT_ANGULAR_INTENSITY_DISTRIBUTION) {
+        angularIntensityDistribution *= getOmega(beta);
+    }
+
+    return angularIntensityDistribution;
+}
+
+// Weighting for the desired angular intensity distribution
+float_type TwoMirrorConcentrator::getOmega(const float_type beta) {
+    return std::exp(-(beta * beta)/(2 * ANGULAR_INTENSITY_DISTRIBUTION_WEIGHTING_C * ANGULAR_INTENSITY_DISTRIBUTION_WEIGHTING_C));
 }
