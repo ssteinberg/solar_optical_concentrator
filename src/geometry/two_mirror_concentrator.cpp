@@ -32,9 +32,9 @@ void TwoMirrorConcentrator::buildFin(const bool &inv, const float_type &f1, cons
         else return float_type(1);
     };
     const auto& SB = [=](const float_type& beta) {
-        if (FLAT_SOURCE && FLAT_TARGET) return std::cos(beta) * w;
-        if (FLAT_SOURCE && !FLAT_TARGET) return ONE_OVER_PI;
-        if (!FLAT_SOURCE && FLAT_TARGET) return PI * std::cos(beta);
+        if constexpr (FLAT_SOURCE && TARGET_SHAPE == Shape::FLAT) return std::cos(beta) * w;
+        if constexpr (FLAT_SOURCE && TARGET_SHAPE == Shape::CYLINDRICAL) return ONE_OVER_PI;
+        if constexpr (!FLAT_SOURCE && TARGET_SHAPE == Shape::FLAT) return PI * std::cos(beta);
         return float_type(1);
     };
     float_type a(0), B(0), r1(f1), r2(f2);
@@ -119,7 +119,7 @@ void TwoMirrorConcentrator::buildInf(const bool &inv, const float_type &L, const
         const float_type d = R - 2 * (L + f);
 
         // (7)
-        const float_type I(1), S(FLAT_TARGET ? cosB : 1);
+        const float_type I(1), S(getAngularIntensityDistribution(B));
         const float_type dy = (inv ? -1 : 1) * S / I * dB;
         const float_type dx = dy * (p.y - r * sinB) / (r * (cosB - 1) + 2 * (L + f));
         const float_vec p_new(p.x + dx, p.y + dy);
@@ -386,4 +386,17 @@ void TwoMirrorConcentrator::writeTwoMirrorConcentrator(const std::string &filePa
     file.open(filePath + "mirror2b.csv");
     m2b.writeMirror(file);
     file.close();
+}
+
+float_type TwoMirrorConcentrator::getAngularIntensityDistribution(const float_type beta) {
+    switch (TARGET_SHAPE) {
+        case Shape::FLAT:
+            return std::cos(beta);
+        case Shape::CYLINDRICAL:
+            return 1;
+        case Shape::ELLIPTICAL:
+            return std::sqrt(std::pow(ELLIPTICAL_TARGET_X_RADIUS, 2) * std::pow(std::sin(beta), 2) + std::pow(ELLIPTICAL_TARGET_Y_RADIUS, 2) * std::pow(std::cos(beta), 2)) / std::max(ELLIPTICAL_TARGET_X_RADIUS, ELLIPTICAL_TARGET_Y_RADIUS);
+        default:
+            throw std::invalid_argument("Target type is not supported.");
+    }
 }

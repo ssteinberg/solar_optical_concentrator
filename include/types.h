@@ -9,16 +9,8 @@ constexpr float_type PI_OVER_TWO = PI / 2;
 constexpr float_type ONE_OVER_PI = 1 / PI;
 constexpr float_type DEG_TO_RAD = PI / 180;
 constexpr float_type RAD_TO_DEG = 180 / PI;
-constexpr float_type EPSILON = 0.05;
+constexpr float_type EPSILON = 0.01;
 constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
-
-enum struct Shape {
-    FLAT,
-    CYLINDRICAL,
-    ELLIPTICAL,
-    PARABOLIC,
-    CONSTRUCTED
-};
 
 enum struct Type {
     SOURCE,

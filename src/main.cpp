@@ -34,7 +34,7 @@ void build_finite() {
     const bool inv(false);
     const float_type f1(1), L(30), f2(1), da(0.000001), a_max(75 * DEG_TO_RAD), w(1), hl(f1 / 1000);
     file.open(outputDataPath + "input.csv");
-    file << FLAT_SOURCE << "," << FLAT_TARGET << "," << inv << "," << hl << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "," << w << "\n";
+    file << FLAT_SOURCE << "," << TARGET_SHAPE << "," << inv << "," << hl << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "," << w << "\n";
     file.close();
 
     // two-mirror concentrator
@@ -52,7 +52,7 @@ void build_finite() {
     if (FLAT_SOURCE) {
         design.addGeometry(&flatSource);
         design.traceExtremeDiffuseRays(outputDataPath); // extreme rays
-        if (FLAT_TARGET) design.addGeometry(&flatTarget);
+        if constexpr (TARGET_SHAPE == Shape::FLAT) design.addGeometry(&flatTarget);
         else {
             cylindricalTarget.r /= PI;
             design.addGeometry(&cylindricalTarget);
@@ -61,7 +61,7 @@ void build_finite() {
     else {
         design.addGeometry(&cylindricalSource);
         design.traceExtremeDiffuseRays(outputDataPath); // extreme rays
-        if (FLAT_TARGET) {
+        if constexpr (TARGET_SHAPE == Shape::FLAT) {
             flatTarget.p1.y *= PI;
             flatTarget.p2.y *= PI;
             design.addGeometry(&flatTarget);
@@ -81,16 +81,16 @@ void build_finite() {
     // std::vector<LineSegment> flatTargets;
     // std::vector<Circle> cylindricalTargets;
     // float_type increment = 2 * hl / numberOfDesigns;
-    // if (FLAT_SOURCE && !FLAT_TARGET) increment /= PI;
-    // else if (!FLAT_SOURCE && FLAT_TARGET) increment *= PI;
+    // if constexpr (FLAT_SOURCE && TARGET_SHAPE == Shape::CYLINDRICAL) increment /= PI;
+    // else if constexpr (!FLAT_SOURCE && TARGET_SHAPE == Shape::FLAT) increment *= PI;
     // for (int i = 0; i < numberOfDesigns; ++i) {
-    //     if (FLAT_TARGET) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
+    //     if constexpr (TARGET_SHAPE == Shape::FLAT) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
     //     else cylindricalTargets.emplace_back(Type::TARGET, float_vec(0, 0), (i + 1) * increment);
     // }
     // for (int i = 0; i < numberOfDesigns; ++i) {
     //     if (FLAT_SOURCE) designs[i].addGeometry(&flatSource);
     //     else designs[i].addGeometry(&cylindricalSource);
-    //     if (FLAT_TARGET) designs[i].addGeometry(&flatTargets[i]);
+    //     if constexpr (TARGET_SHAPE == Shape::FLAT) designs[i].addGeometry(&flatTargets[i]);
     //     else designs[i].addGeometry(&cylindricalTargets[i]);
     //     designs[i].addGeometry(&tmc);
     // }
@@ -116,7 +116,7 @@ void build_finite_ellipse() {
     // input
     const float_type f1(1), L(30), hl(f1 / 1000);
     file.open(outputDataPath + "input.csv");
-    file << FLAT_SOURCE << "," << FLAT_TARGET << "," << hl << "," << f1 << "," << L << "\n";
+    file << FLAT_SOURCE << "," << TARGET_SHAPE << "," << hl << "," << f1 << "," << L << "\n";
     file.close();
 
     // design
@@ -130,7 +130,7 @@ void build_finite_ellipse() {
     if (FLAT_SOURCE) {
         design.addGeometry(&flatSource);
         design.traceExtremeDiffuseRaysEllipse(outputDataPath); // extreme rays
-        if (FLAT_TARGET) design.addGeometry(&flatTarget);
+        if constexpr (TARGET_SHAPE == Shape::FLAT) design.addGeometry(&flatTarget);
         else {
             cylindricalTarget.r /= PI;
             design.addGeometry(&cylindricalTarget);
@@ -139,7 +139,7 @@ void build_finite_ellipse() {
     else {
         design.addGeometry(&cylindricalSource);
         design.traceExtremeDiffuseRaysEllipse(outputDataPath); // extreme rays
-        if (FLAT_TARGET) {
+        if constexpr (TARGET_SHAPE == Shape::FLAT) {
             flatTarget.p1.y *= PI;
             flatTarget.p2.y *= PI;
             design.addGeometry(&flatTarget);
@@ -156,16 +156,16 @@ void build_finite_ellipse() {
     std::vector<LineSegment> flatTargets;
     std::vector<Circle> cylindricalTargets;
     float_type increment = 2 * hl / numberOfDesigns;
-    if (FLAT_SOURCE && !FLAT_TARGET) increment /= PI;
-    else if (!FLAT_SOURCE && FLAT_TARGET) increment *= PI;
+    if constexpr (FLAT_SOURCE && TARGET_SHAPE == Shape::CYLINDRICAL) increment /= PI;
+    else if constexpr (!FLAT_SOURCE && TARGET_SHAPE == Shape::FLAT) increment *= PI;
     for (int i = 0; i < numberOfDesigns; ++i) {
-        if (FLAT_TARGET) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
+        if constexpr (TARGET_SHAPE == Shape::FLAT) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
         else cylindricalTargets.emplace_back(Type::TARGET, float_vec(0, 0), (i + 1) * increment);
     }
     for (int i = 0; i < numberOfDesigns; ++i) {
         if (FLAT_SOURCE) designs[i].addGeometry(&flatSource);
         else designs[i].addGeometry(&cylindricalSource);
-        if (FLAT_TARGET) designs[i].addGeometry(&flatTargets[i]);
+        if constexpr (TARGET_SHAPE == Shape::FLAT) designs[i].addGeometry(&flatTargets[i]);
         else designs[i].addGeometry(&cylindricalTargets[i]);
         designs[i].addGeometry(&Elliot);
     }
@@ -191,7 +191,7 @@ void build_finite_parabola() {
     // input
     const float_type f1(1), L(4), f2(2), hl(f1 / 1000);
     file.open(outputDataPath + "input.csv");
-    file << FLAT_SOURCE << "," << FLAT_TARGET << "," << hl << "," << f1 << "," << L << "," << f2 << "\n";
+    file << FLAT_SOURCE << "," << TARGET_SHAPE << "," << hl << "," << f1 << "," << L << "," << f2 << "\n";
     file.close();
 
     // design
@@ -207,7 +207,7 @@ void build_finite_parabola() {
     if (FLAT_SOURCE) {
         design.addGeometry(&flatSource);
         design.traceExtremeDiffuseRaysParabola(outputDataPath); // extreme rays
-        if (FLAT_TARGET) design.addGeometry(&flatTarget);
+        if constexpr (TARGET_SHAPE == Shape::FLAT) design.addGeometry(&flatTarget);
         else {
             cylindricalTarget.r /= PI;
             design.addGeometry(&cylindricalTarget);
@@ -216,7 +216,7 @@ void build_finite_parabola() {
     else {
         design.addGeometry(&cylindricalSource);
         design.traceExtremeDiffuseRaysParabola(outputDataPath); // extreme rays
-        if (FLAT_TARGET) {
+        if constexpr (TARGET_SHAPE == Shape::FLAT) {
             flatTarget.p1.y *= PI;
             flatTarget.p2.y *= PI;
             design.addGeometry(&flatTarget);
@@ -233,16 +233,16 @@ void build_finite_parabola() {
     // std::vector<LineSegment> flatTargets;
     // std::vector<Circle> cylindricalTargets;
     // float_type increment = 2 * hl / numberOfDesigns;
-    // if (FLAT_SOURCE && !FLAT_TARGET) increment /= PI;
-    // else if (!FLAT_SOURCE && FLAT_TARGET) increment *= PI;
+    // if constexpr (FLAT_SOURCE && TARGET_SHAPE == Shape::CYLINDRICAL) increment /= PI;
+    // else if constexpr (!FLAT_SOURCE && TARGET_SHAPE == Shape::FLAT) increment *= PI;
     // for (int i = 0; i < numberOfDesigns; ++i) {
-    //     if (FLAT_TARGET) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
+    //     if constexpr (TARGET_SHAPE == Shape::FLAT) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
     //     else cylindricalTargets.emplace_back(Type::TARGET, float_vec(0, 0), (i + 1) * increment);
     // }
     // for (int i = 0; i < numberOfDesigns; ++i) {
     //     if (FLAT_SOURCE) designs[i].addGeometry(&flatSource);
     //     else designs[i].addGeometry(&cylindricalSource);
-    //     if (FLAT_TARGET) designs[i].addGeometry(&flatTargets[i]);
+    //     if constexpr (TARGET_SHAPE == Shape::FLAT) designs[i].addGeometry(&flatTargets[i]);
     //     else designs[i].addGeometry(&cylindricalTargets[i]);
     //     designs[i].addGeometry(&Param);
     //     designs[i].addGeometry(&Parker);
@@ -268,10 +268,10 @@ void build_infinite() {
 
     // input
     const bool inv(true);
-    const float_type L(3), f(0.5), dB(0.00001), B_max(85 * DEG_TO_RAD);
+    const float_type L(20), f(1), dB(0.00001), B_max(85 * DEG_TO_RAD);
     const float_vec K_in(-1, 0);
     file.open(outputDataPath + "input.csv");
-    file << FLAT_TARGET << "," << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
+    file << TARGET_SHAPE << "," << ELLIPTICAL_TARGET_X_RADIUS << "," << ELLIPTICAL_TARGET_Y_RADIUS << "," << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
     file.close();
 
     // two-mirror concentrator
@@ -441,7 +441,7 @@ if (CYLINDRICAL_SOURCE) {
 // phase space
 if (FLAT_SOURCE) design.addGeometry(&flatSource);
 else if (CYLINDRICAL_SOURCE) design.addGeometry(&cylindricalSource);
-if (FLAT_TARGET) design.addGeometry(&flatTarget);
+if constexpr (TARGET_SHAPE == Shape::FLAT) design.addGeometry(&flatTarget);
 else if (CYLINDRICAL_TARGET) design.addGeometry(&cylindricalTarget);
 auto phaseSpaceData = design.tracePhaseSpace(10000);
 file.open(outputDataPath + "phase.csv");

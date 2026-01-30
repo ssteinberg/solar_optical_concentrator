@@ -40,4 +40,6 @@ struct TwoMirrorConcentrator : Geometry {
     std::vector<Ray> generateFinalPlotRays() const override;
 
     void writeTwoMirrorConcentrator(const std::string& filePath) const;
+
+    [[nodiscard]] static float_type getAngularIntensityDistribution(float_type beta);
 };
