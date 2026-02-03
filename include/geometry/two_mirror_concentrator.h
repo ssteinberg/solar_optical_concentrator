@@ -17,7 +17,7 @@ struct TwoMirrorConcentrator : Geometry {
 
     void buildFin(const bool& inv, const float_type& f1, const float_type& L, const float_type& f2, const float_type& da, const float_type& a_max, const float_type& w);
 
-    void buildInf(const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max);
+    void buildInf(const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max, const float_type& apertureSize);
 
 
     bool calcCone(const Polygon& p, const float_vec& apex, HitInfo& h);
@@ -43,5 +43,5 @@ struct TwoMirrorConcentrator : Geometry {
 
     [[nodiscard]] static float_type getAngularIntensityDistribution(float_type beta);
 
-    [[nodiscard]] static float_type getOmega(float_type beta);
+    [[nodiscard]] static float_type getOmega(float_type betaMax, float_type apertureSize, float_type incidentIntensity);
 };
