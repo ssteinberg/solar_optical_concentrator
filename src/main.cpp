@@ -268,15 +268,16 @@ void build_infinite() {
 
     // input
     const bool inv(true);
-    const float_type L(8), f(1), dB(0.00001), B_max(85 * DEG_TO_RAD), apertureSize(10);
+    const float_type f(4), dB(0.00001), B_max(150 * DEG_TO_RAD);
+    const float_type L(16 * f);
     const float_vec K_in(-1, 0);
     file.open(outputDataPath + "input.csv");
-    file << TARGET_SHAPE << "," << ELLIPTICAL_TARGET_X_RADIUS << "," << ELLIPTICAL_TARGET_Y_RADIUS << "," << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "," << apertureSize << "\n";
+    file << TARGET_SHAPE << "," << ELLIPTICAL_TARGET_X_RADIUS << "," << ELLIPTICAL_TARGET_Y_RADIUS << "," << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "," << APERTURE_SIZE << "\n";
     file.close();
 
     // two-mirror concentrator
     TwoMirrorConcentrator tmc;
-    tmc.buildInf(inv, L, f, K_in, dB, B_max, apertureSize);
+    tmc.buildInf(inv, L, f, K_in, dB, B_max);
     tmc.writeTwoMirrorConcentrator(outputDataPath);
 
     // design
@@ -284,16 +285,21 @@ void build_infinite() {
     d.addGeometry(&tmc);
 
     // infinite source
-    LineSegment source(Type::SOURCE, float_vec(0, -2), float_vec(0, 2), K_in, K_in);
-    // LineSegment source(Type::SOURCE, float_vec(-1, -2), float_vec(-1, 2), K_in, K_in);
+    const float_type sourceX { f + 1 };
+    LineSegment source(Type::SOURCE, float_vec(sourceX, tmc.m1b.segments.back().p2.y - DOINK), float_vec(sourceX, tmc.m1a.segments.back().p2.y + DOINK), K_in, K_in);
     d.addGeometry(&source);
 
-    // trace extreme rays
-    d.traceExtremeInfiniteRays(outputDataPath, 50);
-
-    // flat target
-    LineSegment target(Type::TARGET, float_vec(0, -EPSILON_OVER_TWO), float_vec(0, EPSILON_OVER_TWO), float_vec(1, 0), float_vec(1, 0));
+    // ellipse target
+    Ellipse target(Type::TARGET, 0, 0, ELLIPTICAL_TARGET_X_RADIUS, ELLIPTICAL_TARGET_Y_RADIUS);
     d.addGeometry(&target);
+
+    // trace mean rays
+    std::vector<Ray> rays;
+    constexpr int numRays = 31;
+    for (int i = 0; i <= numRays; ++i) {
+        rays.push_back(source.sampleMeanRay(static_cast<float>(i) / numRays));
+    }
+    d.traceMeanRays(outputDataPath, rays);
 }
 
 void build_infinite_arbitrary() {

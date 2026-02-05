@@ -3,18 +3,24 @@
 
 #include "design.h"
 
+#include <unordered_set>
+
 void Design::addGeometry(Geometry * const g) {
     geometries.push_back(g);
     if (g->type == Type::SOURCE) source = g;
     else if (g->type == Type::TARGET) target = g;
 }
 
-bool Design::intersect(const Ray &ray, HitInfo &minHitInfo) const {
+bool Design::intersect(const Ray &ray, HitInfo &minHitInfo, const std::optional<std::reference_wrapper<const std::unordered_set<Type>>> ignoredTypes) const {
     bool hit = false;
     HitInfo tempMinHitInfo;
     minHitInfo.l = std::numeric_limits<float_type>::max();
     for (const auto& geometry : geometries) {
-        if ((*geometry).intersect(ray, tempMinHitInfo)) {
+        if (ignoredTypes && ignoredTypes->get().contains(geometry->type)) {
+            continue;
+        }
+
+        if (geometry->intersect(ray, tempMinHitInfo)) {
             if (tempMinHitInfo.l < minHitInfo.l) {
                 hit = true;
                 minHitInfo = tempMinHitInfo;
@@ -28,8 +34,11 @@ Path Design::traceRay(const Ray &ray) const {
     Path path;
     path.addVertex(ray.o);
     Ray r = ray;
+    std::unordered_set initialIgnoredCollisionTypes { Type::SOURCE, Type::TARGET };
+    std::unordered_set finalIgnoredCollisionTypes { Type::SOURCE };
     for (int i = 0; i < 3; ++i) {
-        if (HitInfo h; intersect(r, h)) {
+        std::unordered_set<Type> ignoredCollisionTypes = i < 2 ? initialIgnoredCollisionTypes : finalIgnoredCollisionTypes;
+        if (HitInfo h; intersect(r, h, ignoredCollisionTypes)) {
             if (i == 0 && h.t != Type::MIRROR_1a && h.t != Type::MIRROR_1b) return Path();
             if (i == 1 && h.t != Type::MIRROR_2a && h.t != Type::MIRROR_2b) return Path();
             path.addVertex(h.p);
@@ -54,13 +63,17 @@ std::vector<Path> Design::rayTrace(const std::vector<Ray> &rays) const {
     return paths;
 }
 
-void Design::traceMeanRays(const std::string &filePath, const int &numRays) {
+void Design::traceMeanRays(const std::string &filePath, const int &numRays) const {
     std::vector<Ray> rays;
     for (int i = 0; i < numRays; ++i) rays.push_back(source->sampleMeanRay());
+    traceMeanRays(filePath, rays);
+}
+
+void Design::traceMeanRays(const std::string &filePath, const std::vector<Ray> &rays) const {
     std::vector<Path> paths(rayTrace(rays));
     std::ofstream file;
     file.open(filePath + "mean.csv");
-    for (auto path : paths) path.writePath(file);
+    for (const auto& path : paths) path.writePath(file);
     file.close();
 }
 

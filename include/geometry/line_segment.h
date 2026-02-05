@@ -16,6 +16,7 @@ struct LineSegment : Geometry {
     bool intersect(const Ray& ray, HitInfo& hitInfo) const override;
 
     Ray sampleMeanRay() const override;
+    Ray sampleMeanRay(float_type s) const;
 
     std::pair<Ray, float_type> sampleDiffuseRay() const override;
 

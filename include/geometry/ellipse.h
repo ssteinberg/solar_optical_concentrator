@@ -5,6 +5,7 @@
 struct Ellipse : Geometry {
     float_type f1, L, saa, sab;
     Ellipse(const Type& t, const float_type& f1, const float_type& L) : Geometry(Shape::ELLIPTICAL, t), f1(f1), L(L), saa(f1 + L / 2), sab(std::sqrt(f1 * (f1 + L))) {}
+    Ellipse(const Type& t, const float_type& f1, const float_type& L, const float_type& saa, const float_type& sab) : Geometry(Shape::ELLIPTICAL, t), f1(f1), L(L), saa(saa), sab(sab) {}
     float_vec getCentre() const override;
 
     float_type getLength() const override;

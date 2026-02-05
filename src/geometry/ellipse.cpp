@@ -1,5 +1,7 @@
 #include "geometry/ellipse.h"
 
+#include "geometry/line_segment.h"
+
 float_vec Ellipse::getCentre() const { return float_vec(-L / 2, 0); }
 
 float_type Ellipse::getLength() const { return float_type(0); }
@@ -7,7 +9,23 @@ float_type Ellipse::getLength() const { return float_type(0); }
 bool Ellipse::intersect(const Ray &ray, HitInfo &hitInfo) const {
     if (IGNORE_SOURCE && type == Type::SOURCE) return false;
     else {
+        // Edge case checks
         const float_vec centre = float_vec(-L / 2, 0);
+        const bool aZero { saa == 0 };
+        const bool bZero { sab == 0 };
+
+        if (aZero && bZero) return false;
+
+        if (aZero) {
+            const LineSegment ls(Type::TARGET, centre + float_vec(0, sab), centre - float_vec(0, sab), float_vec(1, 0), float_vec(1, 0));
+            return ls.intersect(ray, hitInfo);
+        }
+
+        if (bZero) {
+            const LineSegment ls(Type::TARGET, centre + float_vec(saa, 0), centre - float_vec(saa, 0), float_vec(0, 1), float_vec(0, 1));
+            return ls.intersect(ray, hitInfo);
+        }
+
         const float_vec oc = ray.o - centre;
         float_type inv_a2 = 1 / (saa * saa);
         float_type inv_b2 = 1 / (sab * sab);

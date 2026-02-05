@@ -1,5 +1,8 @@
 #pragma once
 
+#include <optional>
+#include <unordered_set>
+
 #include "path.h"
 #include "geometry/geometry.h"
 
@@ -10,15 +13,15 @@ struct Design {
 
     void addGeometry(Geometry* const g);
 
-    bool intersect(const Ray& ray, HitInfo& minHitInfo) const;
-
+    bool intersect(const Ray& ray, HitInfo& minHitInfo, std::optional<std::reference_wrapper<const std::unordered_set<Type>>> ignoredTypes = std::nullopt) const;
 
     Path traceRay(const Ray& ray) const;
 
     std::vector<Path> rayTrace(const std::vector<Ray>& rays) const;
 
 
-    void traceMeanRays(const std::string& filePath, const int& numRays);
+    void traceMeanRays(const std::string& filePath, const int& numRays) const;
+    void traceMeanRays(const std::string& filePath, const std::vector<Ray>& rays) const;
 
     void traceDiffuseRays(const std::string& filePath, const int& numRays) const;
 

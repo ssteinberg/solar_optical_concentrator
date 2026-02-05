@@ -100,13 +100,13 @@ void TwoMirrorConcentrator::buildFin(const bool &inv, const float_type &f1, cons
 }
 
 void TwoMirrorConcentrator::buildInf(const bool &inv, const float_type &L, const float_type &f, const float_vec &K_in,
-    const float_type &dB, const float_type &B_max, const float_type &apertureSize) {
+    const float_type &dB, const float_type &B_max) {
 
     // initial conditions
     float_vec p(-L, 0), pp(f, 0), n(1, 0), np(-1, 0);
     float_type R(L + f), r(f);
     const float_type I { 1 };
-    float_type omega { getOmega(B_max, apertureSize, I) };
+    float_type omega { getOmega(B_max, I) };
 
     // numerical integration
     float_type B(0);
@@ -396,15 +396,20 @@ float_type TwoMirrorConcentrator::getAngularIntensityDistribution(const float_ty
             return std::cos(beta);
         case Shape::CYLINDRICAL:
             return 1;
-        case Shape::ELLIPTICAL:
-            return std::sqrt(std::pow(ELLIPTICAL_TARGET_X_RADIUS, 2) * std::pow(std::sin(beta), 2) + std::pow(ELLIPTICAL_TARGET_Y_RADIUS, 2) * std::pow(std::cos(beta), 2)) / std::max(ELLIPTICAL_TARGET_X_RADIUS, ELLIPTICAL_TARGET_Y_RADIUS);
+        case Shape::ELLIPTICAL: {
+            const float_type sinBeta { std::sin(beta) };
+            const float_type cosBeta { std::cos(beta) };
+            constexpr float_type xRadiusSquared { ELLIPTICAL_TARGET_X_RADIUS * ELLIPTICAL_TARGET_X_RADIUS };
+            constexpr float_type yRadiusSquared { ELLIPTICAL_TARGET_Y_RADIUS * ELLIPTICAL_TARGET_Y_RADIUS };
+            return std::sqrt(xRadiusSquared * sinBeta * sinBeta + yRadiusSquared * cosBeta * cosBeta) / std::max(ELLIPTICAL_TARGET_X_RADIUS, ELLIPTICAL_TARGET_Y_RADIUS);
+        }
         default:
             throw std::invalid_argument("Target type is not supported.");
     }
 }
 
 // Minification constant for the desired angular intensity distribution for energy conservation
-float_type TwoMirrorConcentrator::getOmega(const float_type betaMax, const float_type apertureSize, const float_type incidentIntensity) {
+float_type TwoMirrorConcentrator::getOmega(const float_type betaMax, const float_type incidentIntensity) {
     if constexpr (!SHOULD_USE_MINIFICATION_CONSTANT) {
         return 1;
     }
@@ -430,5 +435,5 @@ float_type TwoMirrorConcentrator::getOmega(const float_type betaMax, const float
             throw std::invalid_argument("Target type is not supported.");
     }
 
-    return (apertureSize * incidentIntensity) / definiteIntegral;
+    return (APERTURE_SIZE * incidentIntensity) / definiteIntegral;
 }

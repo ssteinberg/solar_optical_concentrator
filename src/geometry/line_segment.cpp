@@ -10,7 +10,7 @@ float_type LineSegment::getLength() const { return length(p1 - p2); }
 
 bool LineSegment::intersect(const Ray &ray, HitInfo &hitInfo) const {
     if (IGNORE_SOURCE && type == Type::SOURCE) return false;
-    else if (dot(n1, -ray.d) <= 0 && type == Type::TARGET ) return false;
+    // else if (dot(n1, -ray.d) <= 0 && type == Type::TARGET ) return false;
     else {
         const float_vec segDir = p2 - p1;
         const float_type rayDir_x_segDir = cross(ray.d, segDir);
@@ -21,6 +21,7 @@ bool LineSegment::intersect(const Ray &ray, HitInfo &hitInfo) const {
             hitInfo.l = t;
             hitInfo.p = ray.o + hitInfo.l * ray.d;
             hitInfo.n = normalize((1 - s) * n1 + s * n2);
+            if (dot(n1, -ray.d) <= 0) hitInfo.n = -hitInfo.n;
             hitInfo.t = type;
             return true;
         }
@@ -29,7 +30,10 @@ bool LineSegment::intersect(const Ray &ray, HitInfo &hitInfo) const {
 }
 
 Ray LineSegment::sampleMeanRay() const {
-    const float_type s = PCG32::rand();
+    return sampleMeanRay(PCG32::rand());
+}
+
+Ray LineSegment::sampleMeanRay(const float_type s) const {
     const float_vec p = (1 - s) * p1 + s * p2;
     const float_vec n = (1 - s) * n1 + s * n2;
     return Ray(p + (DOINKING ? DOINK * n : float_vec(0, 0)), n);
