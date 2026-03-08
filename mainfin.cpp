@@ -1123,7 +1123,7 @@ int main(int argc, char* argv[]) {
 
         // input
         const bool inv(false);
-        const float_type f1(1), L(30), f2(1), da(0.000001), a_max(151.9 * DEG_TO_RAD), w(1), hl(f1 / 1000);
+        const float_type f1(1), L(30), f2(1), da(0.000001), a_max(151.8 * DEG_TO_RAD), w(1), hl(f1 / 1000);
         file.open(outputDataPath + "input.csv");
         file << FLAT_SOURCE << "," << FLAT_TARGET << "," << inv << "," << hl << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "," << w << "\n";
         file.close();
