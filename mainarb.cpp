@@ -37,14 +37,9 @@ constexpr float_type RAD_TO_DEG = 180 / PI;
 constexpr float_type EPSILON = 0.01;
 constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
 
-// finite system
-constexpr bool BUILD_FINITE = false;
-constexpr bool BUILD_FINITE_ELLIPSE = false;
-constexpr bool BUILD_FINITE_PARABOLA = false;
-
 // infinite system
-constexpr bool BUILD_INFINITE = false;
-constexpr bool BUILD_INFINITE_ARBITRARY = true;
+constexpr bool OLD = false;
+constexpr bool NEW = true;
 
 // source and target
 constexpr bool FLAT_SOURCE = true;
@@ -146,9 +141,6 @@ struct HitInfo {
     float_type l;
     float_vec p, n;
     Type t;
-
-    // length up mirror
-    float_type ml;
 
     // arbitrary target
     float_vec u;
@@ -554,102 +546,10 @@ struct Parabola : Geometry {
 
 
 
-// bounding box
-struct BoundingBox {
-
-	float_vec min, max;
-
-    BoundingBox() : min(std::numeric_limits<float_type>::min(), std::numeric_limits<float_type>::min()),
-        max(std::numeric_limits<float_type>::max(), std::numeric_limits<float_type>::max()) {}
-
-    void fit(const LineSegment& l) {
-        if (l.p1.x < min.x) min.x = l.p1.x;
-        if (l.p1.y < min.y) min.y = l.p1.y;
-        if (l.p2.x < min.x) min.x = l.p2.x;
-        if (l.p2.y < min.y) min.y = l.p2.y;
-        if (l.p1.x > max.x) max.x = l.p1.x;
-        if (l.p1.y > max.y) max.y = l.p1.y;
-        if (l.p2.x > max.x) max.x = l.p2.x;
-        if (l.p2.y > max.y) max.y = l.p2.y;
-    }
-
-    bool intersect(const Ray& ray, HitInfo& minHit) const {
-        float_type tx1 = (min.x - ray.o.x) / ray.d.x;
-        float_type ty1 = (min.y - ray.o.y) / ray.d.y;
-        float_type tx2 = (max.x - ray.o.x) / ray.d.x;
-        float_type ty2 = (max.y - ray.o.y) / ray.d.y;
-        if (tx1 > tx2) {
-            const float_type temp = tx1;
-            tx1 = tx2;
-            tx2 = temp;
-        }
-        if (ty1 > ty2) {
-            const float_type temp = ty1;
-            ty1 = ty2;
-            ty2 = temp;
-        }
-        float_type t1 = tx1;
-        if (t1 < ty1) t1 = ty1;
-        float_type t2 = tx2;
-        if (t2 > ty2) t2 = ty2;
-        if (t1 > t2) return false;
-        if ((t1 < 0) && (t2 < 0)) return false;
-        minHit.l = t1;
-        return true;
-    }
-
-};
-
-// node
-struct Node {
-
-    int size;
-    BoundingBox bb;
-    Node* left = nullptr;
-    Node* right = nullptr;
-    const LineSegment* ls = nullptr;
-
-    Node(const std::vector<LineSegment>& v, const int& li, const int& ri) : size(ri - li + 1) {
-        if (size > 1) {
-            for (int i = li; i <= ri; ++i) bb.fit(v[i]);
-            left = new Node(v, li, li + size / 2 - 1);
-            right = new Node(v, li + size / 2, ri);
-        }
-        else ls = &v.at(li);
-    }
-
-    bool intersect(const Ray& ray, HitInfo& hitInfo) const {
-        if (size == 1) return ls->intersect(ray, hitInfo);
-        if (bb.intersect(ray, hitInfo)) {
-            if (left->intersect(ray, hitInfo)) return true;
-            if (right->intersect(ray, hitInfo)) return true;
-        }
-        return false;
-    }
-
-};
-
-// tree
-struct Tree {
-    Node* root = nullptr;
-    Tree() = default;
-    Tree(const std::vector<LineSegment>& v) { root = new Node(v, 0, static_cast<int>(v.size()) - 1); }
-    bool intersect(const Ray& ray, HitInfo& hitInfo) const { if (root) return root->intersect(ray, hitInfo); return false; }
-};
-
-
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-
 // mirror
 struct Mirror : Geometry {
 
     std::vector<LineSegment> segments;
-    Tree tree;
 
     Mirror() : Geometry(Shape::CONSTRUCTED, Type::MIRROR) {}
 
@@ -667,21 +567,15 @@ struct Mirror : Geometry {
         segments.emplace_back(Type::MIRROR, p1, p2, n1, n2);
     }
 
-    void buildTree() {
-        tree = Tree(segments);
-    }
-
     bool intersect(const Ray& ray, HitInfo& hitInfo) const override {
         float_type length = 0;
         for (auto s : segments) {
             length += s.getLength();
             if (s.intersect(ray, hitInfo)) {
-                hitInfo.ml = length;
                 return true;
             }
         }
         return false;
-        // return tree.intersect(ray, hitInfo);
     }
 
     Ray sampleMeanRay() const override {
@@ -738,84 +632,6 @@ struct TwoMirrorConcentrator : Geometry {
     }
 
 
-    
-    void buildFin(const bool& inv, const float_type& f1, const float_type& L, const float_type& f2, const float_type& da, const float_type& a_max, const float_type& w) {
-
-        // reset
-        reset();
-
-        // initial conditions
-        const auto& Sa = [=](const float_type& alpha) {
-            if (FLAT_SOURCE) return std::cos(alpha);
-            else return float_type(1);
-        };
-        const auto& SB = [=](const float_type& beta) {
-            if (FLAT_SOURCE && FLAT_TARGET) return std::cos(beta) * w;
-            if (FLAT_SOURCE && !FLAT_TARGET) return ONE_OVER_PI * w;
-            if (!FLAT_SOURCE && FLAT_TARGET) return PI * std::cos(beta) * w;
-            return float_type(1) * w;
-        };
-        float_type a(0), B(0), r1(f1), r2(f2);
-        float_vec p1(-f1 - L, 0), p2(f2, 0), n1(1, 0), n2(-1, 0);
-        const float_type F(2 * f1 + L + 2 * f2);
-        const float_vec source(-L, 0), target(0, 0);
-
-        // numerical integration
-        while (a < a_max) {
-
-            // precomputation
-            const float_type cosa(std::cos(a)), sina(std::sin(a));
-            const float_type cosB(std::cos(B)), sinB(std::sin(B));
-            const float_type cosaB(std::cos(a + B)), sinaB(std::sin(a + B));
-
-            // M1
-            const float_type a_new = a + da;
-            const float_type dr1 = (r1 * r2 * sinaB + L * r1 * sina) / (r2 * cosaB + L * cosa - r2 + F) * da;
-            const float_type r1_new = r1 + dr1;
-            const float_vec p1_new(-r1_new * std::cos(a_new) - L, r1_new * std::sin(a_new));
-
-            // M2
-            const float_type dB = (inv ? -1 : 1) * Sa(a) / SB(B) * da;
-            const float_type B_new = B + dB;
-            const float_type dr2 = (r1 * r2 * sinaB + L * r2 * sinB) / (r1 * cosaB + L * cosB - r1 + F) * dB;
-            const float_type r2_new = r2 + dr2;
-            const float_vec p2_new(r2_new * std::cos(B_new), r2_new * std::sin(B_new));
-
-            // ray directions
-            const float_vec v1((p1_new - source) / r1_new);
-            const float_vec u((p2_new - p1_new) / (F - r1_new - r2_new));
-            const float_vec v2((target - p2_new) / r2_new);
-
-            // normals
-            const float_vec n1_new(normalize(u - v1));
-            const float_vec n2_new(normalize(v2 - u));
-
-            // store coordinates and normals
-            m1a.addSegment(p1, p1_new, n1, n1_new);
-            m1b.addSegment(float_vec(p1.x, -p1.y), float_vec(p1_new.x, -p1_new.y), float_vec(n1.x, -n1.y), float_vec(n1_new.x, -n1_new.y));
-            m2a.addSegment(p2, p2_new, n2, n2_new);
-            m2b.addSegment(float_vec(p2.x, -p2.y), float_vec(p2_new.x, -p2_new.y), float_vec(n2.x, -n2.y), float_vec(n2_new.x, -n2_new.y));
-
-            // update
-            a = a_new;
-            r1 = r1_new;
-            p1 = p1_new;
-            B = B_new;
-            r2 = r2_new;
-            p2 = p2_new;
-            n1 = n1_new;
-            n2 = n2_new;
-        }
-
-        // build trees
-        // m1a.buildTree();
-        // m1b.buildTree();
-        // m2a.buildTree();
-        // m2b.buildTree();
-
-        // build barrier
-        buildBarrier();
-    }
 
     void buildInf(const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max) {
 
@@ -1029,6 +845,96 @@ struct TwoMirrorConcentrator : Geometry {
 
 
 
+    void buildInfArb(const std::vector<Polygon>& targets, const bool& inv, const float_type& L, const float_type& f, const float_vec& K_in, const float_type& dB, const float_type& B_max) {
+
+        reset();
+        float_vec p1(-L, 0), p2(f, 0), n1(1, 0);
+        float_type R(L + f), l(f);
+
+        const int numTargets = static_cast<int>(targets.size());
+        std::vector<bool> hits(numTargets);
+        std::vector<HitInfo> hitInfos(numTargets);
+        float_type minDist = std::numeric_limits<float_type>::max();
+        int minDex = 0;
+        for (int i = 0; i < numTargets; ++i) {
+            hits[i] = calcCone(targets[i], p2, hitInfos[i]);
+            if (hits[i] && hitInfos[i].rtraced < minDist) {
+                minDist = hitInfos[i].rtraced;
+                minDex = i;
+            }
+        }
+        if (hits[minDex]) {
+
+            float_vec K_out(hitInfos[minDex].u), n2(K_out - normalize(p2 - p1));
+            float_type r_0, r, a_0, a;
+            r_0 = r = hitInfos[minDex].rtraced;
+            a_0 = a = hitInfos[minDex].a;
+            const float_type F(2 * L + f + r_0);
+
+            float_type B(0);
+            while (std::abs(B) < B_max) {
+
+                const float_type B_new(B + dB);
+                const float_type sinB(std::sin(B)), cosB(std::cos(B));
+
+                const float_type I(1), S(a);
+                const float_type dy((inv ? -1 : 1) * S / (I * a_0) * dB);
+                const float_type dx(dy * (p1.y - l * sinB) / (l * cosB - r + F));
+                const float_vec p1_new(p1.x + dx, p1.y + dy);
+
+                const float_type lump((-R * K_out.y + l * sinB - p1.y) / (R * K_out.x - l * cosB + p1.x));
+                const float_type dl(l * (lump * cosB + sinB) / (cosB - lump * sinB) * dB);
+                const float_type l_new(l + dl);
+                const float_vec p2_new(l_new * float_vec(std::cos(B_new), std::sin(B_new)));
+
+                float_vec K_int(p2_new - p1_new);
+                const float_type R_new(length(K_int));
+                K_int /= R_new;
+
+                std::vector<bool> hats(numTargets);
+                std::vector<HitInfo> hatInfos(numTargets);
+                minDist = std::numeric_limits<float_type>::max();
+                minDex = 0;
+                for (int i = 0; i < numTargets; ++i) {
+                    hats[i] = calcCone(targets[i], p2_new, hatInfos[i]);
+                    if (hats[i] && hatInfos[i].rtraced < minDist) {
+                        minDist = hatInfos[i].rtraced;
+                        minDex = i;
+                    }
+                }
+                if (hats[minDex]) {
+                    K_out = hatInfos[minDex].u;
+                    r = hatInfos[minDex].rtraced;
+                    a = hatInfos[minDex].a;
+                }
+                else {
+                    std::cout << "ERROR: No hit, breaking loop." << std::endl;
+                    break;
+                }
+
+                const float_vec n1_new(normalize(K_int - K_in));
+                const float_vec n2_new(normalize(K_out - K_int));
+
+                m1a.addSegment(p1, p1_new, n1, n1_new);
+                m1b.addSegment(float_vec(p1.x, -p1.y), float_vec(p1_new.x, -p1_new.y), float_vec(n1.x, -n1.y), float_vec(n1_new.x, -n1_new.y));
+                m2a.addSegment(p2, p2_new, n2, n2_new);
+                m2b.addSegment(float_vec(p2.x, -p2.y), float_vec(p2_new.x, -p2_new.y), float_vec(n2.x, -n2.y), float_vec(n2_new.x, -n2_new.y));
+
+                B = B_new;
+                p1 = p1_new;
+                p2 = p2_new;
+                n1 = n1_new;
+                n2 = n2_new;
+                R = R_new;
+                l = l_new;
+            }
+        }
+        
+        buildBarrier();
+    }
+
+
+
     void buildBarrier() {
         const float_type x_max = 1.25 * std::max(std::abs(m1a.segments.front().p1.x), std::abs(m2a.segments.front().p1.x));
         const float_type y_max = 1.25 * std::max(std::abs(m1a.segments.back().p2.y), std::abs(m2a.segments.back().p2.y));
@@ -1117,6 +1023,8 @@ struct Design {
     Geometry* source;
     Geometry* target;
     std::vector<Geometry*> geometries;
+
+
 
     void addGeometry(Geometry* const g) {
         geometries.push_back(g);
@@ -1219,386 +1127,6 @@ struct Design {
         file.close();
     }
 
-    void traceExtremeDiffuseRaysEllipse(const std::string& filePath) {
-        auto extremeRays = source->generateExtremeDiffuseRays();
-
-        std::vector<std::vector<Path>> threadVectors1(omp_get_max_threads());
-        #pragma omp parallel for schedule(dynamic, 1)
-        for (const auto& ray : extremeRays.first) {
-            int threadID = omp_get_thread_num();
-            Path path;
-            path.addVertex(ray.o);
-            Ray r = ray;
-            for (int i = 0; i < 2; ++i) {
-                if (HitInfo h; intersect(r, h)) {
-                    path.addVertex(h.p);
-                    if (h.t == Type::TARGET) break;
-                    float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
-                    r = Ray(h.p + (DOINKING ? DOINK * refl : float_vec(0, 0)), refl);
-                }
-                else break;
-            }
-            threadVectors1[threadID].push_back(path);
-        }
-        std::vector<Path> paths1;
-        for (const auto& v : threadVectors1) paths1.insert(paths1.end(), v.begin(), v.end());
-
-        std::vector<std::vector<Path>> threadVectors2(omp_get_max_threads());
-        #pragma omp parallel for schedule(dynamic, 1)
-        for (const auto& ray : extremeRays.second) {
-            int threadID = omp_get_thread_num();
-            Path path;
-            path.addVertex(ray.o);
-            Ray r = ray;
-            for (int i = 0; i < 2; ++i) {
-                if (HitInfo h; intersect(r, h)) {
-                    path.addVertex(h.p);
-                    if (h.t == Type::TARGET) break;
-                    float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
-                    r = Ray(h.p + (DOINKING ? DOINK * refl : float_vec(0, 0)), refl);
-                }
-                else break;
-            }
-            threadVectors2[threadID].push_back(path);
-        }
-        std::vector<Path> paths2;
-        for (const auto& v : threadVectors2) paths2.insert(paths2.end(), v.begin(), v.end());
-
-        std::ofstream file;
-        file.open(filePath + "extrdiff1.csv");
-        for (auto path : paths1) path.writeFinalSegment(file);
-        file.close();
-        file.open(filePath + "extrdiff2.csv");
-        for (auto path : paths2) path.writeFinalSegment(file);
-        file.close();
-    }
-
-    void traceExtremeDiffuseRaysParabola(const std::string& filePath) {
-        auto extremeRays = source->generateExtremeDiffuseRays();
-
-        std::vector<std::vector<Path>> threadVectors1(omp_get_max_threads());
-        #pragma omp parallel for schedule(dynamic, 1)
-        for (const auto& ray : extremeRays.first) {
-            int threadID = omp_get_thread_num();
-            Path path;
-            path.addVertex(ray.o);
-            Ray r = ray;
-            for (int i = 0; i < 3; ++i) {
-                if (HitInfo h; intersect(r, h)) {
-                    if (i == 0 && h.t != Type::MIRROR1) {
-                        path = Path();
-                        break;
-                    }
-                    if (i == 1 && h.t != Type::MIRROR2) {
-                        path = Path();
-                        break;
-                    }
-                    path.addVertex(h.p);
-                    if (h.t == Type::TARGET) break;
-                    float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
-                    r = Ray(h.p + (DOINKING ? DOINK * refl : float_vec(0, 0)), refl);
-                }
-                else break;
-            }
-            threadVectors1[threadID].push_back(path);
-        }
-        std::vector<Path> paths1;
-        for (const auto& v : threadVectors1) paths1.insert(paths1.end(), v.begin(), v.end());
-
-        std::vector<std::vector<Path>> threadVectors2(omp_get_max_threads());
-        #pragma omp parallel for schedule(dynamic, 1)
-        for (const auto& ray : extremeRays.second) {
-            int threadID = omp_get_thread_num();
-            Path path;
-            path.addVertex(ray.o);
-            Ray r = ray;
-            for (int i = 0; i < 3; ++i) {
-                if (HitInfo h; intersect(r, h)) {
-                    if (i == 0 && h.t != Type::MIRROR1) {
-                        path = Path();
-                        break;
-                    }
-                    if (i == 1 && h.t != Type::MIRROR2) {
-                        path = Path();
-                        break;
-                    }
-                    path.addVertex(h.p);
-                    if (h.t == Type::TARGET) break;
-                    float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
-                    r = Ray(h.p + (DOINKING ? DOINK * refl : float_vec(0, 0)), refl);
-                }
-                else break;
-            }
-            threadVectors2[threadID].push_back(path);
-        }
-        std::vector<Path> paths2;
-        for (const auto& v : threadVectors2) paths2.insert(paths2.end(), v.begin(), v.end());
-
-        std::ofstream file;
-        file.open(filePath + "extrdiff1.csv");
-        for (auto path : paths1) path.writeFinalSegment(file);
-        file.close();
-        file.open(filePath + "extrdiff2.csv");
-        for (auto path : paths2) path.writeFinalSegment(file);
-        file.close();
-    }
-
-
-
-    void tracePhaseSpace(const std::string& filePath, const int& numRays) const {
-
-        std::vector<std::vector<std::vector<float_type>>> threadVectorsTarget(omp_get_max_threads());
-        std::vector<std::vector<std::vector<float_type>>> threadVectorsMirror1(omp_get_max_threads());
-        std::vector<std::vector<std::vector<float_type>>> threadVectorsMirror2(omp_get_max_threads());
-        #pragma omp parallel for schedule(dynamic, 1)
-        for (int i = 0; i < numRays; ++i) {
-            int threadID = omp_get_thread_num();
-            auto sample = source->sampleDiffuseRay();
-            Ray r = sample.first;
-            const float_type source_angle = sample.second;
-            const float_vec source_pos = r.o - source->getCentre();
-
-            // for 3 path segments
-            for (int j = 0; j < 3; ++j) {
-
-                // check intersection
-                if (HitInfo h; intersect(r, h)) {
-
-                    // mirror 1
-                    if (j == 0 && h.t != Type::MIRROR_1a && h.t != Type::MIRROR_1b) break;
-
-                    // mirror 2
-                    if (j == 1 && h.t != Type::MIRROR_2a && h.t != Type::MIRROR_2b) break;
-
-                    // target
-                    if (j == 2 && h.t != Type::TARGET) break;
-                    if (j == 2 && h.t == Type::TARGET) {
-                        if (source->shape == Shape::FLAT && target->shape == Shape::FLAT) {
-                            std::vector<float_type> temp = {cross(-r.d, h.n), h.p.y, std::sin(source_angle), source_pos.y};
-                            threadVectorsTarget[threadID].emplace_back(std::move(temp));
-                        }
-                        else if (source->shape == Shape::CYLINDRICAL && target->shape == Shape::CYLINDRICAL) {
-                            float_type source_theta = std::atan2(source_pos.y, -source_pos.x);
-                            if (source_theta < 0) source_theta += 2 * PI;
-                            float_type target_theta = std::atan2(h.p.y, h.p.x);
-                            if (target_theta < 0) target_theta += 2 * PI;
-                            std::vector<float_type> temp = {cross(-r.d, h.n), target_theta * RAD_TO_DEG, std::sin(source_angle), source_theta * RAD_TO_DEG};
-                            threadVectorsTarget[threadID].emplace_back(std::move(temp));
-                        }
-                        else if (source->shape == Shape::FLAT && target->shape == Shape::CYLINDRICAL) {
-                            float_type target_theta = std::atan2(h.p.y, h.p.x);
-                            if (target_theta < 0) target_theta += 2 * PI;
-                            std::vector<float_type> temp = {cross(-r.d, h.n), target_theta * RAD_TO_DEG, std::sin(source_angle), source_pos.y};
-                            threadVectorsTarget[threadID].emplace_back(std::move(temp));
-                        }
-                        else if (source->shape == Shape::CYLINDRICAL && target->shape == Shape::FLAT) {
-                            float_type source_theta = std::atan2(source_pos.y, -source_pos.x);
-                            if (source_theta < 0) source_theta += 2 * PI;
-                            std::vector<float_type> temp = {cross(-r.d, h.n), h.p.y, std::sin(source_angle), source_theta * RAD_TO_DEG};
-                            threadVectorsTarget[threadID].emplace_back(std::move(temp));
-                        }
-                        break;
-                    }
-
-                    // reflect
-                    float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
-                    r = Ray(h.p + (DOINKING ? DOINK * refl : float_vec(0, 0)), refl);
-                }
-                else break;
-            }
-        }
-
-        std::ofstream file;
-
-        // target
-        std::vector<std::vector<float_type>> dataTarget;
-        for (const auto& v : threadVectorsTarget) dataTarget.insert(dataTarget.end(), v.begin(), v.end());
-        file.open(filePath + "phasetarget.csv");
-        for (const auto& p : dataTarget) file << p[0] << "," << p[1] << "," << p[2] << "," << p[3] << "\n";
-        file.close();
-
-        // mirror 1
-        std::vector<std::vector<float_type>> dataMirror1;
-        for (const auto& v : threadVectorsMirror1) dataMirror1.insert(dataMirror1.end(), v.begin(), v.end());
-        file.open(filePath + "phasemirror1.csv");
-        for (const auto& p : dataMirror1) file << p[0] << "," << p[1] << "," << p[2] << "," << p[3] << "\n";
-        file.close();
-
-        // mirror 2
-        std::vector<std::vector<float_type>> dataMirror2;
-        for (const auto& v : threadVectorsMirror2) dataMirror2.insert(dataMirror2.end(), v.begin(), v.end());
-        file.open(filePath + "phasemirror2.csv");
-        for (const auto& p : dataMirror2) file << p[0] << "," << p[1] << "," << p[2] << "," << p[3] << "\n";
-        file.close();
-    }
-
-    void tracePhaseSpaceEllipse(const std::string& filePath, const int& numRays) const {
-        std::vector<std::vector<std::vector<float_type>>> threadVectorsTarget(omp_get_max_threads());
-        #pragma omp parallel for schedule(dynamic, 1)
-        for (int i = 0; i < numRays; ++i) {
-            int threadID = omp_get_thread_num();
-            auto sample = source->sampleDiffuseRay();
-            Ray r = sample.first;
-            for (int j = 0; j < 2; ++j) {
-                if (HitInfo h; intersect(r, h)) {
-                    if (j == 1 && h.t != Type::TARGET) break;
-                    if (j == 1 && h.t == Type::TARGET) {
-                        if (target->shape == Shape::FLAT) {
-                            std::vector<float_type> temp = {cross(-r.d, h.n), h.p.y};
-                            threadVectorsTarget[threadID].emplace_back(std::move(temp));
-                        }
-                        else if (target->shape == Shape::CYLINDRICAL) {
-                            float_type target_theta = std::atan2(h.p.y, h.p.x);
-                            if (target_theta < 0) target_theta += 2 * PI;
-                            std::vector<float_type> temp = {cross(-r.d, h.n), target_theta * RAD_TO_DEG};
-                            threadVectorsTarget[threadID].emplace_back(std::move(temp));
-                        }
-                        break;
-                    }
-                    float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
-                    r = Ray(h.p + (DOINKING ? DOINK * refl : float_vec(0, 0)), refl);
-                }
-                else break;
-            }
-        }
-        std::ofstream file;
-        std::vector<std::vector<float_type>> dataTarget;
-        for (const auto& v : threadVectorsTarget) dataTarget.insert(dataTarget.end(), v.begin(), v.end());
-        file.open(filePath + "phase.csv");
-        for (const auto& p : dataTarget) file << p[0] << "," << p[1] << "," << p[2] << "," << p[3] << "\n";
-        file.close();
-    }
-
-    void tracePhaseSpaceParabola(const std::string& filePath, const int& numRays) const {
-        std::vector<std::vector<std::vector<float_type>>> threadVectorsTarget(omp_get_max_threads());
-        #pragma omp parallel for schedule(dynamic, 1)
-        for (int i = 0; i < numRays; ++i) {
-            int threadID = omp_get_thread_num();
-            auto sample = source->sampleDiffuseRay();
-            Ray r = sample.first;
-            for (int j = 0; j < 3; ++j) {
-                if (HitInfo h; intersect(r, h)) {
-                    if (j == 0 && h.t != Type::MIRROR1) break;
-                    if (j == 1 && h.t != Type::MIRROR2) break;
-                    if (j == 2 && h.t == Type::TARGET) {
-                        if (target->shape == Shape::FLAT) {
-                            std::vector<float_type> temp = {cross(-r.d, h.n), h.p.y};
-                            threadVectorsTarget[threadID].emplace_back(std::move(temp));
-                        }
-                        else if (target->shape == Shape::CYLINDRICAL) {
-                            float_type target_theta = std::atan2(h.p.y, h.p.x);
-                            if (target_theta < 0) target_theta += 2 * PI;
-                            std::vector<float_type> temp = {cross(-r.d, h.n), target_theta * RAD_TO_DEG};
-                            threadVectorsTarget[threadID].emplace_back(std::move(temp));
-                        }
-                        break;
-                    }
-                    float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
-                    r = Ray(h.p + (DOINKING ? DOINK * refl : float_vec(0, 0)), refl);
-                }
-                else break;
-            }
-        }
-        std::ofstream file;
-        std::vector<std::vector<float_type>> dataTarget;
-        for (const auto& v : threadVectorsTarget) dataTarget.insert(dataTarget.end(), v.begin(), v.end());
-        file.open(filePath + "phase.csv");
-        for (const auto& p : dataTarget) file << p[0] << "," << p[1] << "," << p[2] << "," << p[3] << "\n";
-        file.close();
-    }
-
-
-
-    float_type traceHitData(const int& numRays) const {
-        std::vector<int> threadCounts(omp_get_max_threads());
-        #pragma omp parallel for schedule(dynamic, 1)
-        for (int i = 0; i < numRays; ++i) {
-            int threadID = omp_get_thread_num();
-            Ray r = source->sampleDiffuseRay().first;
-            for (int j = 0; j < 3; ++j) {
-                if (HitInfo h; intersect(r, h)) {
-                    if (h.t == Type::TARGET) {
-                        threadCounts[threadID] += 1;
-                        break;
-                    }
-                    if (h.t == Type::BARRIER) break;
-                    // if (j == 0 && h.t != Type::MIRROR_1a && h.t != Type::MIRROR_1b) break;
-                    // if (j == 1 && h.t != Type::MIRROR_2a && h.t != Type::MIRROR_2b) break;
-                    // if (j == 2 && h.t != Type::TARGET) break;
-                    // if (j == 2 && h.t == Type::TARGET) {
-                    //     threadCounts[threadID] += 1;
-                    //     break;
-                    // }
-                    float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
-                    r = Ray(h.p + (DOINKING ? DOINK * refl : float_vec(0, 0)), refl);
-                }
-                else break;
-            }
-        }
-        int finalCount = 0;
-        for (const auto& count : threadCounts) finalCount += count;
-        return static_cast<float_type>(finalCount) / static_cast<float_type>(numRays);
-    }
-
-    float_type traceHitDataEllipse(const int& numRays) const {
-        std::vector<int> threadCounts(omp_get_max_threads());
-        #pragma omp parallel for schedule(dynamic, 1)
-        for (int i = 0; i < numRays; ++i) {
-            int threadID = omp_get_thread_num();
-            Ray r = source->sampleDiffuseRay().first;
-            for (int j = 0; j < 2; ++j) {
-                if (HitInfo h; intersect(r, h)) {
-                    if (j == 1 && h.t == Type::TARGET) {
-                        threadCounts[threadID] += 1;
-                        break;
-                    }
-                    float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
-                    r = Ray(h.p + (DOINKING ? DOINK * refl : float_vec(0, 0)), refl);
-                }
-                else break;
-            }
-        }
-        int finalCount = 0;
-        for (const auto& count : threadCounts) finalCount += count;
-        return static_cast<float_type>(finalCount) / static_cast<float_type>(numRays);
-    }
-
-    float_type traceHitDataParabola(const int& numRays) const {
-        std::vector<int> threadCounts(omp_get_max_threads());
-        #pragma omp parallel for schedule(dynamic, 1)
-        for (int i = 0; i < numRays; ++i) {
-            int threadID = omp_get_thread_num();
-            Ray r = source->sampleDiffuseRay().first;
-            for (int j = 0; j < 3; ++j) {
-                if (HitInfo h; intersect(r, h)) {
-                    if (j == 0 && h.t != Type::MIRROR1) break;
-                    if (j == 1 && h.t != Type::MIRROR2) break;
-                    if (j == 2 && h.t == Type::TARGET) {
-                        threadCounts[threadID] += 1;
-                        break;
-                    }
-                    float_vec refl = normalize(r.d - 2 * dot(r.d, h.n) * h.n);
-                    r = Ray(h.p + (DOINKING ? DOINK * refl : float_vec(0, 0)), refl);
-                }
-                else break;
-            }
-        }
-        int finalCount = 0;
-        for (const auto& count : threadCounts) finalCount += count;
-        return static_cast<float_type>(finalCount) / static_cast<float_type>(numRays);
-    }
-
-
-
-    void traceFinalPlotRays(const std::string& filePath) const {
-        auto rays = source->generateFinalPlotRays();
-        auto paths = rayTrace(rays);
-        std::ofstream file;
-        file.open(filePath + "finalplotrays.csv");
-        for (auto path : paths) path.writePath(file);
-        file.close();
-    }
-
 };
 
 
@@ -1614,252 +1142,8 @@ int main(int argc, char* argv[]) {
 
 
 
-
-
-    // finite system
-    if (BUILD_FINITE) {
-
-        // output
-        std::string outputDataPath = "datafin/";
-        if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
-        std::ofstream file;
-
-        // input
-        const bool inv(false);
-        const float_type f1(1), L(4), f2(2), da(0.00001), a_max(90 * DEG_TO_RAD), w(1), hl(f1 / 1000);
-        file.open(outputDataPath + "input.csv");
-        file << FLAT_SOURCE << "," << FLAT_TARGET << "," << inv << "," << hl << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "," << w << "\n";
-        file.close();
-
-        // two-mirror concentrator
-        TwoMirrorConcentrator tmc;
-        tmc.buildFin(inv, f1, L, f2, da, a_max, w);
-        tmc.writeTwoMirrorConcentrator(outputDataPath);
-
-        // design
-        Design design;
-        design.addGeometry(&tmc);
-        LineSegment flatSource(Type::SOURCE, float_vec(-L, -hl), float_vec(-L, hl), float_vec(-1, 0), float_vec(-1, 0));
-        Circle cylindricalSource(Type::SOURCE, float_vec(-L, 0), hl);
-        LineSegment flatTarget(Type::TARGET, float_vec(0, -hl * w), float_vec(0, hl * w), float_vec(1, 0), float_vec(1, 0));
-        Circle cylindricalTarget(Type::TARGET, float_vec(0, 0), hl * w);
-        if (FLAT_SOURCE) {
-            design.addGeometry(&flatSource);
-            design.traceExtremeDiffuseRays(outputDataPath); // extreme rays
-            if (FLAT_TARGET) design.addGeometry(&flatTarget);
-            else {
-                cylindricalTarget.r /= PI;
-                design.addGeometry(&cylindricalTarget);
-            }
-        }
-        else {
-            design.addGeometry(&cylindricalSource);
-            design.traceExtremeDiffuseRays(outputDataPath); // extreme rays
-            if (FLAT_TARGET) {
-                flatTarget.p1.y *= PI;
-                flatTarget.p2.y *= PI;
-                design.addGeometry(&flatTarget);
-            }
-            else design.addGeometry(&cylindricalTarget);
-        }
-
-        // final plot
-        design.traceFinalPlotRays(outputDataPath);
-
-        // phase space
-        design.tracePhaseSpace(outputDataPath, 100000);
-
-        // hit report
-        const int numberOfDesigns = 10;
-        std::vector<Design> designs(numberOfDesigns);
-        std::vector<LineSegment> flatTargets;
-        std::vector<Circle> cylindricalTargets;
-        float_type increment = 2 * hl / numberOfDesigns;
-        if (FLAT_SOURCE && !FLAT_TARGET) increment /= PI;
-        else if (!FLAT_SOURCE && FLAT_TARGET) increment *= PI;
-        for (int i = 0; i < numberOfDesigns; ++i) {
-            if (FLAT_TARGET) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
-            else cylindricalTargets.emplace_back(Type::TARGET, float_vec(0, 0), (i + 1) * increment);
-        }
-        for (int i = 0; i < numberOfDesigns; ++i) {
-            if (FLAT_SOURCE) designs[i].addGeometry(&flatSource);
-            else designs[i].addGeometry(&cylindricalSource);
-            if (FLAT_TARGET) designs[i].addGeometry(&flatTargets[i]);
-            else designs[i].addGeometry(&cylindricalTargets[i]);
-            designs[i].addGeometry(&tmc);
-        }
-        std::vector<float_vec> hitData;
-        const int numberOfTrials = 1;
-        const int numberOfRays = 10000;
-        for (const auto& d : designs) for (int i = 0; i < numberOfTrials; ++i) hitData.emplace_back(d.target->getLength() / d.source->getLength(), d.traceHitData(numberOfRays));
-        file.open(outputDataPath + "hitdata.csv");
-        for (const auto& p : hitData) file << p.x << "," << p.y << "\n";
-        file.close();
-    }
-
-
-
-
-
-    // finite system w/ analytic ellipse
-    if (BUILD_FINITE_ELLIPSE) {
-
-        // output
-        std::string outputDataPath = "datafinell/";
-        if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
-        std::ofstream file;
-
-        // input
-        const float_type f1(1), L(30), hl(f1 / 1000);
-        file.open(outputDataPath + "input.csv");
-        file << FLAT_SOURCE << "," << FLAT_TARGET << "," << hl << "," << f1 << "," << L << "\n";
-        file.close();
-
-        // design
-        Design design;
-        Ellipse Elliot(Type::MIRROR, f1, L);
-        design.addGeometry(&Elliot);
-        LineSegment flatSource(Type::SOURCE, float_vec(-L, -hl), float_vec(-L, hl), float_vec(-1, 0), float_vec(-1, 0));
-        Circle cylindricalSource(Type::SOURCE, float_vec(-L, 0), hl);
-        LineSegment flatTarget(Type::TARGET, float_vec(0, -hl), float_vec(0, hl), float_vec(1, 0), float_vec(1, 0));
-        Circle cylindricalTarget(Type::TARGET, float_vec(0, 0), hl);
-        if (FLAT_SOURCE) {
-            design.addGeometry(&flatSource);
-            design.traceExtremeDiffuseRaysEllipse(outputDataPath); // extreme rays
-            if (FLAT_TARGET) design.addGeometry(&flatTarget);
-            else {
-                cylindricalTarget.r /= PI;
-                design.addGeometry(&cylindricalTarget);
-            }
-        }
-        else {
-            design.addGeometry(&cylindricalSource);
-            design.traceExtremeDiffuseRaysEllipse(outputDataPath); // extreme rays
-            if (FLAT_TARGET) {
-                flatTarget.p1.y *= PI;
-                flatTarget.p2.y *= PI;
-                design.addGeometry(&flatTarget);
-            }
-            else design.addGeometry(&cylindricalTarget);
-        }
-
-        // phase space
-        design.tracePhaseSpaceEllipse(outputDataPath, 100000);
-
-        // hit report
-        const int numberOfDesigns = 10;
-        std::vector<Design> designs(numberOfDesigns);
-        std::vector<LineSegment> flatTargets;
-        std::vector<Circle> cylindricalTargets;
-        float_type increment = 2 * hl / numberOfDesigns;
-        if (FLAT_SOURCE && !FLAT_TARGET) increment /= PI;
-        else if (!FLAT_SOURCE && FLAT_TARGET) increment *= PI;
-        for (int i = 0; i < numberOfDesigns; ++i) {
-            if (FLAT_TARGET) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
-            else cylindricalTargets.emplace_back(Type::TARGET, float_vec(0, 0), (i + 1) * increment);
-        }
-        for (int i = 0; i < numberOfDesigns; ++i) {
-            if (FLAT_SOURCE) designs[i].addGeometry(&flatSource);
-            else designs[i].addGeometry(&cylindricalSource);
-            if (FLAT_TARGET) designs[i].addGeometry(&flatTargets[i]);
-            else designs[i].addGeometry(&cylindricalTargets[i]);
-            designs[i].addGeometry(&Elliot);
-        }
-        std::vector<float_vec> hitData;
-        const int numberOfTrials = 1;
-        const int numberOfRays = 10000;
-        for (const auto& d : designs) for (int i = 0; i < numberOfTrials; ++i) hitData.emplace_back(d.target->getLength() / d.source->getLength(), d.traceHitDataEllipse(numberOfRays));
-        file.open(outputDataPath + "hitdata.csv");
-        for (const auto& p : hitData) file << p.x << "," << p.y << "\n";
-        file.close();
-    }
-
-
-
-
-
-    // finite system w/ pair of analytic parabolas
-    if (BUILD_FINITE_PARABOLA) {
-
-        // output
-        std::string outputDataPath = "datafinpara/";
-        if (!std::filesystem::exists(outputDataPath)) std::filesystem::create_directory(outputDataPath);
-        std::ofstream file;
-
-        // input
-        const float_type f1(1), L(4), f2(2), hl(f1 / 1000);
-        file.open(outputDataPath + "input.csv");
-        file << FLAT_SOURCE << "," << FLAT_TARGET << "," << hl << "," << f1 << "," << L << "," << f2 << "\n";
-        file.close();
-
-        // design
-        Design design;
-        Parabola Param(Type::MIRROR1, 1 / (4 * f1), -f1 - L);
-        Parabola Parker(Type::MIRROR2, -1 / (4 * f2), f2);
-        design.addGeometry(&Param);
-        design.addGeometry(&Parker);
-        LineSegment flatSource(Type::SOURCE, float_vec(-L, -hl), float_vec(-L, hl), float_vec(-1, 0), float_vec(-1, 0));
-        Circle cylindricalSource(Type::SOURCE, float_vec(-L, 0), hl);
-        LineSegment flatTarget(Type::TARGET, float_vec(0, -hl), float_vec(0, hl), float_vec(1, 0), float_vec(1, 0));
-        Circle cylindricalTarget(Type::TARGET, float_vec(0, 0), hl);
-        if (FLAT_SOURCE) {
-            design.addGeometry(&flatSource);
-            design.traceExtremeDiffuseRaysParabola(outputDataPath); // extreme rays
-            if (FLAT_TARGET) design.addGeometry(&flatTarget);
-            else {
-                cylindricalTarget.r /= PI;
-                design.addGeometry(&cylindricalTarget);
-            }
-        }
-        else {
-            design.addGeometry(&cylindricalSource);
-            design.traceExtremeDiffuseRaysParabola(outputDataPath); // extreme rays
-            if (FLAT_TARGET) {
-                flatTarget.p1.y *= PI;
-                flatTarget.p2.y *= PI;
-                design.addGeometry(&flatTarget);
-            }
-            else design.addGeometry(&cylindricalTarget);
-        }
-
-        // phase space
-        design.tracePhaseSpaceParabola(outputDataPath, 100000);
-
-        // hit report
-        const int numberOfDesigns = 10;
-        std::vector<Design> designs(numberOfDesigns);
-        std::vector<LineSegment> flatTargets;
-        std::vector<Circle> cylindricalTargets;
-        float_type increment = 2 * hl / numberOfDesigns;
-        if (FLAT_SOURCE && !FLAT_TARGET) increment /= PI;
-        else if (!FLAT_SOURCE && FLAT_TARGET) increment *= PI;
-        for (int i = 0; i < numberOfDesigns; ++i) {
-            if (FLAT_TARGET) flatTargets.emplace_back(Type::TARGET, float_vec(0, -(i + 1) * increment), float_vec(0, (i + 1) * increment), float_vec(1, 0), float_vec(1, 0));
-            else cylindricalTargets.emplace_back(Type::TARGET, float_vec(0, 0), (i + 1) * increment);
-        }
-        for (int i = 0; i < numberOfDesigns; ++i) {
-            if (FLAT_SOURCE) designs[i].addGeometry(&flatSource);
-            else designs[i].addGeometry(&cylindricalSource);
-            if (FLAT_TARGET) designs[i].addGeometry(&flatTargets[i]);
-            else designs[i].addGeometry(&cylindricalTargets[i]);
-            designs[i].addGeometry(&Param);
-            designs[i].addGeometry(&Parker);
-        }
-        std::vector<float_vec> hitData;
-        const int numberOfTrials = 1;
-        const int numberOfRays = 10000;
-        for (const auto& d : designs) for (int i = 0; i < numberOfTrials; ++i) hitData.emplace_back(d.target->getLength() / d.source->getLength(), d.traceHitDataParabola(numberOfRays));
-        file.open(outputDataPath + "hitdata.csv");
-        for (const auto& p : hitData) file << p.x << "," << p.y << "\n";
-        file.close();
-    }
-
-
-
-
-
     // infinite system
-    if (BUILD_INFINITE) {
+    if (OLD) {
 
         // output
         std::string outputDataPath = "datainf/";
@@ -1898,10 +1182,8 @@ int main(int argc, char* argv[]) {
 
 
 
-
-
     // infinite system w/ arbitrary target
-    if (BUILD_INFINITE_ARBITRARY) {
+    if (NEW) {
 
         // output
         std::string outputDataPath = "datainfarb/";
@@ -1910,7 +1192,7 @@ int main(int argc, char* argv[]) {
 
         // input
         const bool inv(true);
-        const float_type L(3), f(0.5), dB(0.000001), B_max(85 * DEG_TO_RAD);
+        const float_type L(3), f(0.125), dB(0.00001), B_max(85 * DEG_TO_RAD);
         const float_vec K_in(-1, 0);
         file.open(outputDataPath + "input.csv");
         file << EPSILON << "," << inv << "," << L << "," << f << "," << dB << "," << B_max * RAD_TO_DEG << "\n";
@@ -1920,13 +1202,20 @@ int main(int argc, char* argv[]) {
         LineSegment source(Type::SOURCE, float_vec(0, -2), float_vec(0, 2), K_in, K_in);
 
         // target
-        const std::vector<float_vec> targetVertices = {float_vec(0, -EPSILON_OVER_TWO), float_vec(0, EPSILON_OVER_TWO)}; // ideal
+        // const std::vector<float_vec> targetVertices = {float_vec(0, -EPSILON_OVER_TWO), float_vec(0, EPSILON_OVER_TWO)}; // ideal
         // const std::vector<float_vec> targetVertices = {float_vec(1, 1), float_vec(-2, 0), float_vec(0, -1)}; // triangle
-        const Polygon target(Type::TARGET, targetVertices);
+        // const Polygon target(Type::TARGET, targetVertices);
+
+        // multiple targets
+        const float_type c0 = 0.0; const std::vector<float_vec> v0 = {float_vec(0, -EPSILON_OVER_TWO + c0), float_vec(0, EPSILON_OVER_TWO + c0)};
+        const float_type c1 = 0.05; const std::vector<float_vec> v1 = {float_vec(0, -EPSILON_OVER_TWO + c1), float_vec(0, EPSILON_OVER_TWO + c1)};
+        const float_type c2 = 0.1; const std::vector<float_vec> v2 = {float_vec(0, -EPSILON_OVER_TWO + c2), float_vec(0, EPSILON_OVER_TWO + c2)};
+        const std::vector<Polygon> targets = {Polygon(Type::TARGET, v0), Polygon(Type::TARGET, v1), Polygon(Type::TARGET, v2)};
 
         // two-mirror concentrator
         TwoMirrorConcentrator tmc;
-        tmc.buildInfArb(target, inv, L, f, K_in, dB, B_max, 6, 2);
+        // tmc.buildInfArb(target, inv, L, f, K_in, dB, B_max, 0, 0);
+        tmc.buildInfArb(targets, inv, L, f, K_in, dB, B_max);
         tmc.writeTwoMirrorConcentrator(outputDataPath);
 
         // design
@@ -1935,151 +1224,13 @@ int main(int argc, char* argv[]) {
         d.addGeometry(&source);
 
         // trace extreme rays
-        d.traceExtremeInfiniteRays(outputDataPath, 50);
+        d.traceExtremeInfiniteRays(outputDataPath, 100);
     }
 
 
 
-
-
 }
-
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-
-/*
-
-// parabolic mirror
-struct ParabolicMirror : Geometry {
-
-    Mirror M;
-
-    void build(const float_type& f, const float_type& dy, const float_type& B_max) {
-        float_vec p(-f, 0), n(1, 0);
-        float_type B(0);
-        while (B < B_max) {
-            const float_type y_new = p.y + dy;
-            const float_type x_new = y_new * y_new / (4 * f) - f;
-            const float_vec p_new(x_new, y_new);
-            const float_vec n_new = normalize(float_vec(2 * f, -p_new.y));
-            M.addSegment(p, p_new, n, n_new);
-            p = p_new;
-            n = n_new;
-            B = std::atan(p_new.y / p_new.x) * RAD_TO_DEG;
-        }
-    }
-
-    void traceRay(std::vector<std::tuple<float_vec, float_vec, float_vec>>& rayPaths, const Ray& ray) {
-        if (HitInfo hitInfo; M.intersect(ray, hitInfo)) {
-            rayPaths.emplace_back(ray.o, hitInfo.p, hitInfo.p + normalize(ray.d - 2 * dot(hitInfo.n, ray.d) * hitInfo.n));
-        }
-    }
-
-};
-
-*/
-
-/*
-
-// ray trace
-std::vector<Ray> rays;
-if (FLAT_SOURCE) {
-    for (int i = 0; i < 100; ++i) {
-        // rays.push_back(flatSource.sampleMeanRay());
-        rays.push_back(flatSource.sampleDiffuseRay());
-    }
-}
-if (CYLINDRICAL_SOURCE) {
-    for (int i = 0; i < 100; ++i) {
-        // rays.push_back(cylindricalSource.sampleMeanRay());
-        rays.push_back(cylindricalSource.sampleDiffuseRay());
-    }
-}
-std::vector<Path> paths = design.rayTrace(rays);
-
-// sampled rays
-file.open("data_2mc_fin_paths.csv");
-for (auto path : paths) {
-    path.writePath(file);
-}
-file.close();
-
-*/
-
-/*
-
-// extreme rays
-tmc.buildBarrier();
-if (FLAT_SOURCE) {
-    auto extrRays = flatSource.generateExtremeRays();
-    auto p1Paths = design.rayTrace(extrRays.first);
-    auto p2Paths = design.rayTrace(extrRays.second);
-    file.open(outputDataPath + "extreme1.csv");
-    for (auto path : p1Paths) path.writeFinalSegment(file);
-    file.close();
-    file.open(outputDataPath + "extreme2.csv");
-    for (auto path : p2Paths) path.writeFinalSegment(file);
-    file.close();
-}
-if (CYLINDRICAL_SOURCE) {
-    auto extrRays = cylindricalSource.generateExtremeRays();
-    auto p1Paths = design.rayTrace(extrRays.first);
-    auto p2Paths = design.rayTrace(extrRays.second);
-    file.open(outputDataPath + "extreme1.csv");
-    for (auto path : p1Paths) path.writeFinalSegment(file);
-    file.close();
-    file.open(outputDataPath + "extreme2.csv");
-    for (auto path : p2Paths) path.writeFinalSegment(file);
-    file.close();
-}
-
-// phase space
-if (FLAT_SOURCE) design.addGeometry(&flatSource);
-else if (CYLINDRICAL_SOURCE) design.addGeometry(&cylindricalSource);
-if (FLAT_TARGET) design.addGeometry(&flatTarget);
-else if (CYLINDRICAL_TARGET) design.addGeometry(&cylindricalTarget);
-auto phaseSpaceData = design.tracePhaseSpace(10000);
-file.open(outputDataPath + "phase.csv");
-for (auto data : phaseSpaceData) file << data[0] << "," << data[1] << "," << data[2] << "\n";
-file.close();
-
-*/
-
-/*
-
-// flat target
-const LineSegment target(Type::TARGET, float_vec(0, -EPSILON_OVER_TWO), float_vec(0, EPSILON_OVER_TWO), float_vec(1, 0), float_vec(1, 0));
-
-// flat target
-const float_vec tp1(0, -EPSILON_OVER_TWO), tp2(0, EPSILON_OVER_TWO);
-const float_vec tn(1, 0);
-Mirror t; t.addSegment(tp1, tp2, tn, tn);
-const std::vector<float_vec> tpts = {tp1, tp2};
-
-// triangular target
-// const float_vec tp1(1, 1), tp2(-2, 0), tp3(0, -1);
-// const float_vec tt1(tp1 - tp2), tt2(tp2 - tp3), tt3(tp3 - tp1);
-// const float_vec tn1(-tt1.y, tt1.x), tn2(-tt2.y, tt2.x), tn3(-tt3.y, tt3.x);
-// LineSegment t1(Type::TARGET, tp1, tp2, tn1, tn1);
-// LineSegment t2(Type::TARGET, tp2, tp3, tn2, tn2);
-// LineSegment t3(Type::TARGET, tp3, tp1, tn3, tn3);
-// d.addGeometry(&t1);
-// d.addGeometry(&t2);
-// d.addGeometry(&t3);
-
-*/
-
-/*
-std::vector<std::pair<float_type, std::vector<float_type>>> hitData;
-const int numberOfTrials = 3;
-const int numberOfRays = 10000;
-for (const auto& d : designs) for (int i = 0; i < numberOfTrials; ++i) hitData.emplace_back(d.target->getLength() / d.source->getLength(), d.traceDetailedHitData(numberOfRays));
-file.open(outputDataPath + "hitdata.csv");
-for (const auto& p : hitData) file << p.first << "," << p.second[0] << "," << p.second[1] << "," << p.second[2] << "," << p.second[3] << "\n";
-file.close();
-*/
