@@ -418,10 +418,10 @@ float_type TwoMirrorConcentrator::getOmega(const float_type betaMax, const float
 
     switch (TARGET_SHAPE) {
         case Shape::FLAT:
-            definiteIntegral = 2 * betaMax;
+            definiteIntegral = 2 * std::sin(betaMax);
             break;
         case Shape::CYLINDRICAL:
-            definiteIntegral = 2 * std::sin(betaMax);
+            definiteIntegral = 2 * betaMax;
             break;
         case Shape::ELLIPTICAL: {
             constexpr float_type max { std::max(ELLIPTICAL_TARGET_X_RADIUS, ELLIPTICAL_TARGET_Y_RADIUS) };
