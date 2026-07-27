@@ -1224,7 +1224,7 @@ int main(int argc, char* argv[]) {
 
         // input
         const bool inv(false);
-        const float_type f1(1), L(30), f2(1), da(0.00001), a_max(158.45 * DEG_TO_RAD), w(1), hl(f1 / 1000);
+        const float_type f1(1), L(30), f2(1), da(0.000001), a_max(158.45 * DEG_TO_RAD), w(1), hl(f1 / 1000);
 
         // two-mirror concentrator
         TwoMirrorConcentrator tmc;
@@ -1269,7 +1269,7 @@ int main(int argc, char* argv[]) {
 
 
     // ELLIPTICAL CONCENTRATOR
-    if (true) {
+    if (false) {
 
         // output
         std::string outputDataPath = "dataell/";
