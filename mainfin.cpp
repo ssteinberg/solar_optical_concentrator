@@ -36,10 +36,10 @@ constexpr float_type EPSILON_OVER_TWO = EPSILON / 2;
 // build system
 constexpr bool TWO_MIRROR_CONCENTRATOR = true;
 constexpr bool PARABOLIC_CONCENTRATOR = false;
-constexpr bool ELLIPTICAL_CONCENTRATOR = true;
+constexpr bool ELLIPTICAL_CONCENTRATOR = false;
 
 // source and target
-constexpr bool FLAT_SOURCE = false;
+constexpr bool FLAT_SOURCE = true;
 constexpr bool FLAT_TARGET = false;
 constexpr bool IGNORE_SOURCE = true;
 
@@ -192,7 +192,7 @@ struct LineSegment : Geometry {
     Ray sampleSourceRay() const override {
         const float_vec n(-1, 0);
         // const float_type theta = std::asin(2 * PCG32::rand() - 1);
-        const float_type theta = 70 * DEG_TO_RAD;
+        const float_type theta = 50 * DEG_TO_RAD;
         const float_type cos0 = std::cos(theta);
         const float_type sin0 = std::sin(theta);
         const float_vec rotDir(n.x * cos0 - n.y * sin0, n.x * sin0 + n.y * cos0);
@@ -1367,7 +1367,7 @@ int main(int argc, char* argv[]) {
 
         // input
         const bool inv(false);
-        const float_type f1(1), L(30), f2(1), da(0.000001), a_max(151.9 * DEG_TO_RAD), w(1), hl(f1 / 1000);
+        const float_type f1(1), L(30), f2(1), da(0.000001), a_max(75 * DEG_TO_RAD), w(1), hl(f1 / 1000);
         file.open(outputDataPath + "input.csv");
         file << FLAT_SOURCE << "," << FLAT_TARGET << "," << inv << "," << hl << "," << f1 << "," << L << "," << f2 << "," << da << "," << a_max * RAD_TO_DEG << "," << w << "\n";
         file.close();
@@ -1405,7 +1405,7 @@ int main(int argc, char* argv[]) {
         }
 
         // source rays
-        // design.traceSourceRays(outputDataPath, 1);
+        design.traceSourceRays(outputDataPath, 1);
 
         // phase
         // design.tracePhaseSpace(outputDataPath, 100000);
